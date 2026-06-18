@@ -5,14 +5,16 @@ let package = Package(
     name: "DisplaySwitch",
     platforms: [.macOS(.v13)],
     targets: [
-        .target(name: "DisplaySwitchCore"),
+        .target(name: "DisplaySwitchCore", swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(
             name: "DisplaySwitchApp",
-            dependencies: ["DisplaySwitchCore"]
+            dependencies: ["DisplaySwitchCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
             name: "DisplaySwitchCoreTests",
-            dependencies: ["DisplaySwitchCore"]
+            dependencies: ["DisplaySwitchCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]
 )
