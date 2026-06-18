@@ -22,7 +22,3 @@ public struct DisplayInfo: Equatable, Sendable {
     }
 }
 
-/// 只保留外接屏（排除内建屏）。
-public func externalDisplays(_ all: [DisplayInfo]) -> [DisplayInfo] {
-    all.filter { !$0.isBuiltin }
-}

@@ -19,9 +19,7 @@ public final class DisplayController {
     }
 
     public func menuItems() -> [DisplayMenuItem] {
-        let active = service.activeExternalDisplays()
-        let hasBuiltIn = service.hasBuiltInDisplay()
-        // 合并:当前活跃 + 已关闭(去重,活跃优先),按 x 排序稳定显示。
+        let active = service.activeDisplays()
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
         for d in disabled.values {
             // 已被本 app 断开的屏不可能是主屏:显示时清除 isMain,
@@ -31,14 +29,10 @@ public final class DisplayController {
         }
         for d in active { byID[d.id] = d }
         let ordered = byID.values.sorted { $0.bounds.minX < $1.bounds.minX }
-
         return ordered.map { d in
             let on = disabled[d.id] == nil
-            let canOff = on ? canDisable(d, among: active, hasBuiltIn: hasBuiltIn) : false
-            return DisplayMenuItem(id: d.id,
-                                   label: displayLabel(for: d, among: ordered),
-                                   isOn: on,
-                                   canToggleOff: canOff)
+            let canOff = on ? canDisable(d, among: active) : false
+            return DisplayMenuItem(id: d.id, label: displayLabel(for: d), isOn: on, canToggleOff: canOff)
         }
     }
 
@@ -51,9 +45,9 @@ public final class DisplayController {
             return true
         }
         // 当前开着 → 尝试关闭(带保护校验)
-        let active = service.activeExternalDisplays()
+        let active = service.activeDisplays()
         guard let target = active.first(where: { $0.id == id }) else { return false }
-        guard canDisable(target, among: active, hasBuiltIn: service.hasBuiltInDisplay()) else { return false }
+        guard canDisable(target, among: active) else { return false }
         guard service.setEnabled(id, false) else { return false }
         disabled[id] = target
         return true

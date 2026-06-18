@@ -1,11 +1,8 @@
 import CoreGraphics
 
-/// 判断能否关闭某块外接屏。机型感知:
-/// - 有内建屏:任意活跃外接屏都可关(开盖用内建屏恢复)。
-/// - 无内建屏:必须保留至少一块活跃外接屏。
-public func canDisable(_ target: DisplayInfo, among all: [DisplayInfo], hasBuiltIn: Bool) -> Bool {
-    guard !target.isBuiltin, target.isActive else { return false }
-    if hasBuiltIn { return true }
-    let activeExternals = all.filter { !$0.isBuiltin && $0.isActive }
-    return activeExternals.count > 1
+/// 能否关闭某块屏。统一规则:绝不让系统无屏可用——
+/// 必须始终至少保留一块活跃屏(任意类型,含内建)。
+public func canDisable(_ target: DisplayInfo, among all: [DisplayInfo]) -> Bool {
+    guard target.isActive else { return false }
+    return all.filter { $0.isActive }.count > 1
 }

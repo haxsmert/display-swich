@@ -3,5 +3,5 @@ import Testing
 
 @Test("构建管道可用")
 func buildPipelineWorks() {
-    #expect(externalDisplays([]) == [])
+    #expect(displayLabel(for: makeInfo(id: 1, name: "X")) == "X")
 }

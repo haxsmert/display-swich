@@ -26,7 +26,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let items = controller.menuItems()
 
         if items.isEmpty {
-            let empty = NSMenuItem(title: "未检测到外接显示器", action: nil, keyEquivalent: "")
+            let empty = NSMenuItem(title: "未检测到显示器", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
         } else {
