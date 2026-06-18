@@ -57,10 +57,13 @@ public final class CGDisplayService: SystemDisplayService {
         var cfg: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&cfg) == .success else { return false }
         let e = fn(cfg, id, on)
+        guard e == .success else {
+            CGCancelDisplayConfiguration(cfg)
+            return false
+        }
         // 首选 .forAppOnly:进程退出由系统自动回滚,天然防死锁。
         // 若 Step 2 实测断开不全局生效,改成 .forSession(见 Step 3 兜底)。
-        let c = CGCompleteDisplayConfiguration(cfg, .forAppOnly)
-        return e == .success && c == .success
+        return CGCompleteDisplayConfiguration(cfg, .forAppOnly) == .success
     }
 
     private static func uuid(for id: CGDirectDisplayID) -> String {

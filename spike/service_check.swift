@@ -5,7 +5,10 @@ import CoreGraphics
 // 最小内联版断开测试,确认 .forAppOnly 是否让断开「全局生效」(活跃屏减少)。
 let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
 typealias Fn = @convention(c) (CGDisplayConfigRef?, CGDirectDisplayID, Bool) -> CGError
-let fn = unsafeBitCast(dlsym(RTLD_DEFAULT, "CGSConfigureDisplayEnabled")!, to: Fn.self)
+guard let sym = dlsym(RTLD_DEFAULT, "CGSConfigureDisplayEnabled") else {
+    print("符号 CGSConfigureDisplayEnabled 不可用,退出。"); exit(1)
+}
+let fn = unsafeBitCast(sym, to: Fn.self)
 
 func activeCount() -> UInt32 { var c: UInt32 = 0; CGGetActiveDisplayList(0, nil, &c); return c }
 func setEnabled(_ id: CGDirectDisplayID, _ on: Bool, _ opt: CGConfigureOption) -> Bool {
