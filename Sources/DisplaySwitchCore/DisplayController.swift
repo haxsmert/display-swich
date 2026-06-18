@@ -23,7 +23,12 @@ public final class DisplayController {
         let hasBuiltIn = service.hasBuiltInDisplay()
         // 合并:当前活跃 + 已关闭(去重,活跃优先),按 x 排序稳定显示。
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
-        for d in disabled.values { byID[d.id] = d }
+        for d in disabled.values {
+            // 已被本 app 断开的屏不可能是主屏:显示时清除 isMain,
+            // 否则关掉主屏后(主屏角色转移给另一块)会出现两块都标「主屏」的错乱。
+            byID[d.id] = DisplayInfo(id: d.id, uuid: d.uuid, name: d.name, bounds: d.bounds,
+                                     isMain: false, isBuiltin: d.isBuiltin, isActive: false)
+        }
         for d in active { byID[d.id] = d }
         let ordered = byID.values.sorted { $0.bounds.minX < $1.bounds.minX }
 

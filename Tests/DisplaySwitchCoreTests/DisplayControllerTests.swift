@@ -25,8 +25,22 @@ final class MockService: SystemDisplayService {
     func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {
         setCalls.append((id, on))
         guard setResult else { return false }
-        if on { activeIDs.insert(id) } else { activeIDs.remove(id) }
+        if on {
+            activeIDs.insert(id)
+        } else {
+            activeIDs.remove(id)
+            // 模拟 macOS:关掉主屏后,主屏角色转移给剩余的第一个活跃屏
+            if known[id]?.isMain == true, let next = activeIDs.sorted().first, let info = known[next] {
+                known[id] = withMain(known[id]!, false)
+                known[next] = withMain(info, true)
+            }
+        }
         return true
+    }
+
+    private func withMain(_ d: DisplayInfo, _ isMain: Bool) -> DisplayInfo {
+        DisplayInfo(id: d.id, uuid: d.uuid, name: d.name, bounds: d.bounds,
+                    isMain: isMain, isBuiltin: d.isBuiltin, isActive: d.isActive)
     }
 }
 
@@ -98,4 +112,26 @@ func canToggleOffFalseForLastExternal() {
     let item = ctrl.menuItems().first { $0.id == 2 }
     #expect(item?.canToggleOff == false)
     #expect(item?.isOn == true)
+}
+
+@Test("关闭主屏后:已关闭的屏不再标主屏,主屏标记跟随转移到的活跃屏")
+func closingMainClearsMainOnDisabledAndTransfersLabel() {
+    let main = DisplayInfo(id: 5, uuid: "u5", name: "R",
+                           bounds: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                           isMain: true, isBuiltin: false, isActive: true)
+    let side = DisplayInfo(id: 2, uuid: "u2", name: "L",
+                           bounds: CGRect(x: -1920, y: 0, width: 1920, height: 1080),
+                           isMain: false, isBuiltin: false, isActive: true)
+    let svc = MockService(all: [main, side], builtIn: true)
+    let ctrl = DisplayController(service: svc)
+
+    #expect(ctrl.toggle(id: 5) == true)   // 关右主屏 → Mock 模拟主屏转移给 id2
+
+    let items = ctrl.menuItems()
+    let item5 = items.first { $0.id == 5 }!
+    let item2 = items.first { $0.id == 2 }!
+    #expect(item5.isOn == false)
+    #expect(!item5.label.contains("主屏"))   // 已关闭的屏不再标主屏
+    #expect(item2.isOn == true)
+    #expect(item2.label.contains("主屏"))     // 转移后的新主屏
 }
