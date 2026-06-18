@@ -1,2 +1,6 @@
-// 占位入口,Task 8 会替换为真正的菜单栏启动代码。
-print("DisplaySwitch")
+import AppKit
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()

@@ -45,6 +45,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        quit.keyEquivalentModifierMask = .command
         quit.target = self
         menu.addItem(quit)
     }
