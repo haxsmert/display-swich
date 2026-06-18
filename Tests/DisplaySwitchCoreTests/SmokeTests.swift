@@ -3,5 +3,5 @@ import Testing
 
 @Test("构建管道可用")
 func buildPipelineWorks() {
-    #expect(DisplaySwitchCore.version == "0.0.1")
+    #expect(externalDisplays([]) == [])
 }
