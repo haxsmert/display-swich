@@ -29,9 +29,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let supported = controller.isSupported
         let items = controller.menuItems()
 
-        // 私有符号缺失(如未来 macOS 改名/移除):顶部提示,下方各屏只读不可切换。
+        // 不支持(非 Apple Silicon,或私有接口在未来 macOS 缺失):顶部提示,下方各屏只读不可切换。
         if !supported {
-            let warn = NSMenuItem(title: "⚠️ 当前系统不支持显示器开关(接口缺失)",
+            let warn = NSMenuItem(title: "⚠️ 此设备不支持显示器开关(需 Apple Silicon + 受支持的 macOS)",
                                   action: nil, keyEquivalent: "")
             warn.isEnabled = false
             menu.addItem(warn)

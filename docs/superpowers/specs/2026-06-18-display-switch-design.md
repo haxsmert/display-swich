@@ -25,7 +25,7 @@ Mac 外接双显示器场景下,希望用一个**极简**的菜单栏小工具,*
 
 **结论:纯自研「真·断开」在该平台可行**,不需要 BetterDisplay、不需要关 SIP、不需要特殊 entitlement(开发者签名即可运行)。
 
-⚠️ 平台限制:此结论依赖 Apple Silicon + 较新 macOS。Intel 平台不在目标范围。
+⚠️ 平台限制:此结论依赖 Apple Silicon + 较新 macOS。Intel 平台不在目标范围。**已加架构自检**:`isSupported` 要求 `hw.optional.arm64 == 1`,非 Apple Silicon 一律判不支持(只读不动屏);加之 app 实为 arm64-only、Intel 根本无法启动,双重保证不在未验证平台上动显示器。
 
 ## 3. 非目标（YAGNI,本期不做）
 
@@ -126,7 +126,7 @@ CGCompleteDisplayConfiguration(cfg, .forAppOnly)
 
 | 风险 | 缓解 |
 |---|---|
-| 私有符号跨 macOS 大版本可能改名/失效 | 符号经 `dlsym` 探测;`isSupported` 已接线:缺失则菜单顶部提示「不支持」+ 各屏只读不可切换(`toggle` 亦早退)。集中一处便于适配 |
+| 私有符号跨 macOS 大版本可能改名/失效;非 Apple Silicon 平台未验证 | `isSupported = 符号经 dlsym 可用 且 hw.optional.arm64==1`;任一不满足 → 菜单顶部提示「不支持」+ 各屏只读不可切换(`toggle` 亦早退)。便于适配,也保证不在未验证平台动屏 |
 | 崩溃/异常残留黑屏 | `.forAppOnly` 系统自动回滚 + 启动时恢复 + 退出时恢复 |
 | 关到 0 块活跃屏(无恢复路径) | `canDisable` 机型感知:无内建屏机器须留 ≥1 活跃屏;有内建屏机器允许关到全黑(开盖恢复),但内建屏已被软件关掉/target 本身是内建屏时禁止 → 纯软件不会陷入无法恢复的全黑 |
 | **死锁:软件关内建 + 物理拔光外接 → 持续全黑** | 纯软件路径已被 §7.1 堵死;仅余物理拔屏边界 → **强制重启即恢复(`.forAppOnly` 回滚 + 永不自启);软件自动恢复已证伪,不做** |
