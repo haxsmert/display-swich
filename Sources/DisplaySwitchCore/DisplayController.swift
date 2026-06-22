@@ -21,6 +21,14 @@ public final class DisplayController {
     /// 系统是否支持开关(私有符号存在)。不支持时 UI 应只读并提示,各项 canToggleOff 亦为 false。
     public var isSupported: Bool { service.isSupported }
 
+    /// 把「已被本 app 关闭」状态与系统真实活跃状态对齐:任何当前活跃的屏一律视为「开」,
+    /// 从 disabled 中剔除。远程会话重配置 / 睡眠唤醒 / 重新插拔等会在 app 之外把被关的屏
+    /// 重新点亮,若不对齐,菜单会把一块活跃屏错误地显示为「关」,且因 app 误以为它仍关着、
+    /// 再点会被当成「开」而永远勾不上。每次读状态前对账即可自愈。
+    private func reconcileDisabled(activeIDs: Set<CGDirectDisplayID>) {
+        disabled = disabled.filter { !activeIDs.contains($0.key) }
+    }
+
     /// 是否存在「可开盖恢复的内建屏」兜底:机器有内建屏面板,且内建屏当前未被本 app 软件关闭。
     /// (被软件关掉的内建屏开盖救不回,不算兜底。)
     private func builtInFallbackAvailable() -> Bool {
@@ -30,6 +38,7 @@ public final class DisplayController {
 
     public func menuItems() -> [DisplayMenuItem] {
         let active = service.activeDisplays()
+        reconcileDisabled(activeIDs: Set(active.map { $0.id }))
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
         for d in disabled.values {
             // 已被本 app 断开的屏不可能是主屏:显示时清除 isMain,
@@ -56,6 +65,10 @@ public final class DisplayController {
     public func toggle(id: CGDirectDisplayID) -> Bool {
         // 私有符号缺失:开关不可用,直接拒绝(恢复走 restoreAll/启动兜底,不受此限)。
         guard service.isSupported else { return false }
+        // 先与系统真实活跃状态对账:被系统在 app 之外重新点亮的屏要从 disabled 剔除,
+        // 否则一块已经活跃的屏会被误当成「关着」而走进开屏分支。
+        let active = service.activeDisplays()
+        reconcileDisabled(activeIDs: Set(active.map { $0.id }))
         // 当前关着 → 打开
         if disabled[id] != nil {
             guard service.setEnabled(id, true) else { return false }
@@ -63,7 +76,6 @@ public final class DisplayController {
             return true
         }
         // 当前开着 → 尝试关闭(带保护校验)
-        let active = service.activeDisplays()
         guard let target = active.first(where: { $0.id == id }) else { return false }
         guard canDisable(target, among: active, builtInFallback: builtInFallbackAvailable()) else { return false }
         guard service.setEnabled(id, false) else { return false }

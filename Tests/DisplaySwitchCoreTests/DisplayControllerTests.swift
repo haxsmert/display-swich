@@ -45,6 +45,12 @@ final class MockService: SystemDisplayService {
         DisplayInfo(id: d.id, uuid: d.uuid, name: d.name, bounds: d.bounds,
                     isMain: isMain, isBuiltin: d.isBuiltin, isActive: d.isActive)
     }
+
+    /// 模拟「系统在 app 之外把某块屏重新点亮」(远程会话重配置 / 睡眠唤醒 / 重新插拔),
+    /// 不经过 app 的 toggle —— 这是真机上 disabled 状态变陈旧的来源。
+    func externallyReactivate(_ id: CGDirectDisplayID) {
+        activeIDs.insert(id)
+    }
 }
 
 private func twoExternals() -> [DisplayInfo] {
@@ -163,6 +169,21 @@ func cannotCloseLastExternalAfterBuiltinDisabled() {
     #expect(ctrl.toggle(id: 1) == true)    // 先软件关内建,剩外接活跃
     #expect(ctrl.toggle(id: 2) == false)   // 再关最后一块外接 → 拒绝(内建已软件关,非兜底)
     #expect(!svc.setCalls.contains { $0.id == 2 && $0.on == false })
+}
+
+@Test("系统在 app 之外重新点亮被关的屏:菜单显示为开,且不再残留为已关闭")
+func systemReactivatesDisabledDisplay() {
+    let svc = MockService(all: twoExternals())
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 3)                                    // app 关掉 3
+    #expect(ctrl.menuItems().first { $0.id == 3 }?.isOn == false)
+
+    svc.externallyReactivate(3)                              // 远程会话/重配置在 app 之外把 3 又点亮
+    // 它现在是活跃屏 → 必须显示为「开」,不能因陈旧的 disabled 残留而显示为「关」。
+    #expect(ctrl.menuItems().first { $0.id == 3 }?.isOn == true)
+    // 状态已真正对齐:再点是「关」(正确调用 setEnabled false),而非被误当成「开」。
+    #expect(ctrl.toggle(id: 3) == true)
+    #expect(svc.setCalls.last?.on == false)
 }
 
 @Test("关闭主屏后:已关闭的屏不再标主屏,主屏标记跟随转移到的活跃屏")
