@@ -14,8 +14,18 @@ public final class CGDisplayService: SystemDisplayService {
         cgsConfigureDisplayEnabled = sym.map { unsafeBitCast($0, to: ConfigEnabledFn.self) }
     }
 
-    /// 私有断开符号是否可用;不可用时应禁用开关功能。
-    public var isSupported: Bool { cgsConfigureDisplayEnabled != nil }
+    /// 是否支持显示器开关:私有符号可用 **且** 运行在 Apple Silicon 硬件上。
+    /// 「真·断开」仅在 Apple Silicon 验证过;Intel 上该路径未验证、可能不可逆,故一律判不支持 → 只读不动屏。
+    public var isSupported: Bool { cgsConfigureDisplayEnabled != nil && Self.isAppleSilicon() }
+
+    /// 是否运行在 Apple Silicon 硬件上(`hw.optional.arm64 == 1`;Intel 上为 0 或查询失败)。
+    /// 注:本 app 实为 arm64-only,Intel 上根本无法启动;此自检是显式契约 + 防未来打成 universal。
+    private static func isAppleSilicon() -> Bool {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let ok = sysctlbyname("hw.optional.arm64", &value, &size, nil, 0)
+        return ok == 0 && value == 1
+    }
 
     public func activeDisplays() -> [DisplayInfo] {
         var count: UInt32 = 0
