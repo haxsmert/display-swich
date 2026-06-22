@@ -8,6 +8,7 @@ final class MockService: SystemDisplayService {
     private var activeIDs: Set<CGDirectDisplayID>
     var setResult = true
     var supported = true
+    var hasBuiltIn = false
     private(set) var setCalls: [(id: CGDirectDisplayID, on: Bool)] = []
 
     init(all: [DisplayInfo]) {
@@ -16,6 +17,7 @@ final class MockService: SystemDisplayService {
     }
 
     var isSupported: Bool { supported }
+    func hasBuiltInDisplay() -> Bool { hasBuiltIn }
 
     func activeDisplays() -> [DisplayInfo] {
         known.values
@@ -131,6 +133,36 @@ func menuItemsNotToggleableWhenUnsupported() {
     svc.supported = false
     let ctrl = DisplayController(service: svc)
     #expect(ctrl.menuItems().allSatisfy { $0.canToggleOff == false })
+}
+
+@Test("有内建屏的机器(笔记本合盖):允许关最后一块外接屏(开盖可恢复内建)")
+func laptopCanCloseLastExternal() {
+    let svc = MockService(all: [makeInfo(id: 2, x: 0)])   // 仅一块外接活跃,内建合盖不在列表
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.menuItems().first { $0.id == 2 }?.canToggleOff == true)
+    #expect(ctrl.toggle(id: 2) == true)
+    #expect(svc.setCalls.contains { $0.id == 2 && $0.on == false })
+}
+
+@Test("无内建屏的机器(macmini):禁止关最后一块外接屏")
+func desktopCannotCloseLastExternal() {
+    let svc = MockService(all: [makeInfo(id: 2, x: 0)])
+    svc.hasBuiltIn = false
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.menuItems().first { $0.id == 2 }?.canToggleOff == false)
+    #expect(ctrl.toggle(id: 2) == false)
+    #expect(svc.setCalls.isEmpty)
+}
+
+@Test("内建屏已被软件关掉后:禁止关最后一块外接屏(开盖救不回,防死锁)")
+func cannotCloseLastExternalAfterBuiltinDisabled() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 2, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.toggle(id: 1) == true)    // 先软件关内建,剩外接活跃
+    #expect(ctrl.toggle(id: 2) == false)   // 再关最后一块外接 → 拒绝(内建已软件关,非兜底)
+    #expect(!svc.setCalls.contains { $0.id == 2 && $0.on == false })
 }
 
 @Test("关闭主屏后:已关闭的屏不再标主屏,主屏标记跟随转移到的活跃屏")

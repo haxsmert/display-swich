@@ -21,6 +21,13 @@ public final class DisplayController {
     /// 系统是否支持开关(私有符号存在)。不支持时 UI 应只读并提示,各项 canToggleOff 亦为 false。
     public var isSupported: Bool { service.isSupported }
 
+    /// 是否存在「可开盖恢复的内建屏」兜底:机器有内建屏面板,且内建屏当前未被本 app 软件关闭。
+    /// (被软件关掉的内建屏开盖救不回,不算兜底。)
+    private func builtInFallbackAvailable() -> Bool {
+        let builtInDisabledByUs = disabled.values.contains { $0.isBuiltin }
+        return service.hasBuiltInDisplay() && !builtInDisabledByUs
+    }
+
     public func menuItems() -> [DisplayMenuItem] {
         let active = service.activeDisplays()
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
@@ -37,9 +44,10 @@ public final class DisplayController {
         }
         // 整组(活跃+已关闭)一起算标签:同名屏按 UUID 稳定编号,关掉其一不丢号、重开不漂移。
         let labels = displayLabels(for: ordered)
+        let fallback = builtInFallbackAvailable()
         return ordered.map { d in
             let on = disabled[d.id] == nil
-            let canOff = (service.isSupported && on) ? canDisable(d, among: active) : false
+            let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
             return DisplayMenuItem(id: d.id, label: labels[d.id] ?? displayLabel(for: d), isOn: on, canToggleOff: canOff)
         }
     }
@@ -57,7 +65,7 @@ public final class DisplayController {
         // 当前开着 → 尝试关闭(带保护校验)
         let active = service.activeDisplays()
         guard let target = active.first(where: { $0.id == id }) else { return false }
-        guard canDisable(target, among: active) else { return false }
+        guard canDisable(target, among: active, builtInFallback: builtInFallbackAvailable()) else { return false }
         guard service.setEnabled(id, false) else { return false }
         disabled[id] = target
         return true
