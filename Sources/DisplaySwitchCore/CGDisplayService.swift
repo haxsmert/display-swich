@@ -1,6 +1,7 @@
 import CoreGraphics
 import ColorSync
 import AppKit
+import IOKit.ps
 
 /// SystemDisplayService 的真实实现。封装 CoreGraphics 枚举、私有断开符号、内建屏检测。
 public final class CGDisplayService: SystemDisplayService {
@@ -36,6 +37,20 @@ public final class CGDisplayService: SystemDisplayService {
         }
     }
 
+    public func hasBuiltInDisplay() -> Bool {
+        // 1) 在线列表里有内建屏 → 有。
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &count)
+        if count > 0 {
+            var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            CGGetOnlineDisplayList(count, &ids, &count)
+            if ids.contains(where: { CGDisplayIsBuiltin($0) != 0 }) { return true }
+        }
+        // 2) 便携机(有内建电池)→ 有内建屏(合盖时内建屏不在在线列表)。
+        // 3) 都不满足 → 保守判定为「无内建屏」(宁可禁止全关,不冒险)。
+        return Self.hasInternalBattery()
+    }
+
     public func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {
         guard let fn = cgsConfigureDisplayEnabled else { return false }
         var cfg: CGDisplayConfigRef?
@@ -63,5 +78,21 @@ public final class CGDisplayService: SystemDisplayService {
             }
         }
         return ""
+    }
+
+    /// 是否有内建电池 → 便携机的代理判定(笔记本必有内建屏;iMac 无电池但内建屏恒亮,
+    /// 由「至少留一块活跃屏」自然覆盖,故按无内建屏处理也安全)。
+    private static func hasInternalBattery() -> Bool {
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef] else {
+            return false
+        }
+        for ps in list {
+            if let desc = IOPSGetPowerSourceDescription(blob, ps)?.takeUnretainedValue() as? [String: Any],
+               let type = desc[kIOPSTypeKey] as? String, type == kIOPSInternalBatteryType {
+                return true
+            }
+        }
+        return false
     }
 }

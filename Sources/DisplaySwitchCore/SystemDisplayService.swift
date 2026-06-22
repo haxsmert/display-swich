@@ -6,6 +6,9 @@ public protocol SystemDisplayService {
     var isSupported: Bool { get }
     /// 当前所有活跃屏(含内建屏)。
     func activeDisplays() -> [DisplayInfo]
+    /// 这台机器是否**具备**内建屏面板(便携机即便合盖、内建屏不活跃也算);
+    /// 用于「关到全黑后能否开盖恢复」的兜底判定。
+    func hasBuiltInDisplay() -> Bool
     /// 启用/断开某块屏,返回是否成功。
     func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool
 }
