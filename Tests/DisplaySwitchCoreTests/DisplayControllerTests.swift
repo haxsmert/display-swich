@@ -7,12 +7,15 @@ final class MockService: SystemDisplayService {
     private var known: [CGDirectDisplayID: DisplayInfo]
     private var activeIDs: Set<CGDirectDisplayID>
     var setResult = true
+    var supported = true
     private(set) var setCalls: [(id: CGDirectDisplayID, on: Bool)] = []
 
     init(all: [DisplayInfo]) {
         known = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
         activeIDs = Set(all.filter { $0.isActive }.map { $0.id })
     }
+
+    var isSupported: Bool { supported }
 
     func activeDisplays() -> [DisplayInfo] {
         known.values
@@ -110,6 +113,24 @@ func canToggleOffFalseForLastActive() {
     let item = ctrl.menuItems().first { $0.id == 2 }
     #expect(item?.canToggleOff == false)
     #expect(item?.isOn == true)
+}
+
+@Test("私有符号缺失时 toggle 被拒绝,不调用 setEnabled")
+func toggleRejectedWhenUnsupported() {
+    let svc = MockService(all: twoExternals())
+    svc.supported = false
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.isSupported == false)
+    #expect(ctrl.toggle(id: 3) == false)
+    #expect(svc.setCalls.isEmpty)
+}
+
+@Test("私有符号缺失时 menuItems 各项 canToggleOff 均为 false")
+func menuItemsNotToggleableWhenUnsupported() {
+    let svc = MockService(all: twoExternals())
+    svc.supported = false
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.menuItems().allSatisfy { $0.canToggleOff == false })
 }
 
 @Test("关闭主屏后:已关闭的屏不再标主屏,主屏标记跟随转移到的活跃屏")

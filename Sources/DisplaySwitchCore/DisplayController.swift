@@ -18,6 +18,9 @@ public final class DisplayController {
         self.service = service
     }
 
+    /// 系统是否支持开关(私有符号存在)。不支持时 UI 应只读并提示,各项 canToggleOff 亦为 false。
+    public var isSupported: Bool { service.isSupported }
+
     public func menuItems() -> [DisplayMenuItem] {
         let active = service.activeDisplays()
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
@@ -28,16 +31,23 @@ public final class DisplayController {
                                      isMain: false, isBuiltin: d.isBuiltin, isActive: false)
         }
         for d in active { byID[d.id] = d }
-        let ordered = byID.values.sorted { $0.bounds.minX < $1.bounds.minX }
+        // 按稳定键(基名+UUID)排序:同名屏相邻、与编号同序,不随位置漂移。
+        let ordered = byID.values.sorted {
+            (baseName($0.name), $0.uuid, $0.id) < (baseName($1.name), $1.uuid, $1.id)
+        }
+        // 整组(活跃+已关闭)一起算标签:同名屏按 UUID 稳定编号,关掉其一不丢号、重开不漂移。
+        let labels = displayLabels(for: ordered)
         return ordered.map { d in
             let on = disabled[d.id] == nil
-            let canOff = on ? canDisable(d, among: active) : false
-            return DisplayMenuItem(id: d.id, label: displayLabel(for: d), isOn: on, canToggleOff: canOff)
+            let canOff = (service.isSupported && on) ? canDisable(d, among: active) : false
+            return DisplayMenuItem(id: d.id, label: labels[d.id] ?? displayLabel(for: d), isOn: on, canToggleOff: canOff)
         }
     }
 
     @discardableResult
     public func toggle(id: CGDirectDisplayID) -> Bool {
+        // 私有符号缺失:开关不可用,直接拒绝(恢复走 restoreAll/启动兜底,不受此限)。
+        guard service.isSupported else { return false }
         // 当前关着 → 打开
         if disabled[id] != nil {
             guard service.setEnabled(id, true) else { return false }

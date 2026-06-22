@@ -18,12 +18,24 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
         let menu = NSMenu()
         menu.delegate = self
+        // 关掉自动启用:否则 AppKit 见 target 响应 action 就强制可点,
+        // 覆盖我们手动算的 isEnabled(最后一块活跃屏该灰显不可点)。
+        menu.autoenablesItems = false
         statusItem.menu = menu
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let supported = controller.isSupported
         let items = controller.menuItems()
+
+        // 私有符号缺失(如未来 macOS 改名/移除):顶部提示,下方各屏只读不可切换。
+        if !supported {
+            let warn = NSMenuItem(title: "⚠️ 当前系统不支持显示器开关(接口缺失)",
+                                  action: nil, keyEquivalent: "")
+            warn.isEnabled = false
+            menu.addItem(warn)
+        }
 
         if items.isEmpty {
             let empty = NSMenuItem(title: "未检测到显示器", action: nil, keyEquivalent: "")
@@ -32,13 +44,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         } else {
             for item in items {
                 let mi = NSMenuItem(title: item.label,
-                                    action: #selector(toggleItem(_:)),
+                                    action: supported ? #selector(toggleItem(_:)) : nil,
                                     keyEquivalent: "")
                 mi.target = self
                 mi.state = item.isOn ? .on : .off
                 mi.representedObject = item.id
-                // 开着但不允许关(无内建屏的最后一块)→ 禁用该项,避免误关。
-                mi.isEnabled = !(item.isOn && !item.canToggleOff)
+                // 不支持 → 全部只读;支持时:开着但不允许关(最后一块活跃屏)→ 禁用,避免误关。
+                mi.isEnabled = supported && !(item.isOn && !item.canToggleOff)
                 menu.addItem(mi)
             }
         }
