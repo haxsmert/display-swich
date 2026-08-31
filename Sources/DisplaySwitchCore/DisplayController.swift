@@ -21,12 +21,36 @@ public final class DisplayController {
     /// 系统是否支持开关(私有符号存在)。不支持时 UI 应只读并提示,各项 canToggleOff 亦为 false。
     public var isSupported: Bool { service.isSupported }
 
-    /// 把「已被本 app 关闭」状态与系统真实活跃状态对齐:任何当前活跃的屏一律视为「开」,
-    /// 从 disabled 中剔除。远程会话重配置 / 睡眠唤醒 / 重新插拔等会在 app 之外把被关的屏
-    /// 重新点亮,若不对齐,菜单会把一块活跃屏错误地显示为「关」,且因 app 误以为它仍关着、
-    /// 再点会被当成「开」而永远勾不上。每次读状态前对账即可自愈。
-    private func reconcileDisabled(activeIDs: Set<CGDirectDisplayID>) {
+    /// 把「已被本 app 关闭」的记录与系统真相对账。每次读状态前跑一遍即可自愈,不依赖任何回调。
+    ///
+    /// **正向**:任何当前活跃的屏一律视为「开」并从 disabled 剔除。远程会话重配置 / 睡眠唤醒 /
+    /// 重新插拔会在 app 之外把被关的屏重新点亮;不对齐的话,菜单会把一块活跃屏显示成「关」,
+    /// 且因 app 误以为它仍关着、再点会被当成「开」,于是永远勾不上。
+    ///
+    /// **反向**:已被物理拔走的屏要从 disabled 剔除,否则它会像幽灵一样长期赖在菜单里
+    /// (点它只是对一个已失效的 display ID 调开屏,毫无效果)。难点在于 CoreGraphics 分不出
+    /// 「被我软件关掉」和「被拔掉」——两种情况下该屏都从 online 列表消失、UUID 也解析不出;
+    /// 只有 IOKit 还留着那条物理连接,故改用它的物理外接屏数来对账。
+    private func reconcileDisabled(active: [DisplayInfo]) {
+        let activeIDs = Set(active.map { $0.id })
         disabled = disabled.filter { !activeIDs.contains($0.key) }
+
+        let disabledExternals = disabled.values.filter { !$0.isBuiltin }
+        guard !disabledExternals.isEmpty else { return }
+        // 查不到物理连接就什么都不做:此时无法证明任何一块屏已被拔走,
+        // 而误删的代价是用户再也开不回那块屏。
+        guard let physical = service.physicalExternalCount() else { return }
+        // 还能容下几块「被我关着的外接屏」= 物理连着的外接屏 − 已经活跃的外接屏。
+        let slots = physical - active.filter { !$0.isBuiltin }.count
+        if slots <= 0 {
+            // 一块都容不下 → 这些记录全是拔线后的残留,清掉。
+            for d in disabledExternals { disabled[d.id] = nil }
+        }
+        // slots 大于 0 却少于记录数:确知有屏被拔走了,但无从判定是哪几块
+        // (实测 IOKit 的 IOMFBUUID 与 CoreGraphics 的 display UUID 不是同一套标识,对不上)。
+        // 此时不猜、一律保留:多显示一项的代价,远小于误删一块还连着、用户正等着开回来的屏。
+        //
+        // 内建屏不参与反向对账:它不会被「拔掉」,合盖也只是暂时不活跃,开盖即回。
     }
 
     /// 是否存在「可开盖恢复的内建屏」兜底:机器有内建屏面板,且内建屏当前未被本 app 软件关闭。
@@ -38,7 +62,7 @@ public final class DisplayController {
 
     public func menuItems() -> [DisplayMenuItem] {
         let active = service.activeDisplays()
-        reconcileDisabled(activeIDs: Set(active.map { $0.id }))
+        reconcileDisabled(active: active)
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
         for d in disabled.values {
             // 已被本 app 断开的屏不可能是主屏:显示时清除 isMain,
@@ -68,7 +92,7 @@ public final class DisplayController {
         // 先与系统真实活跃状态对账:被系统在 app 之外重新点亮的屏要从 disabled 剔除,
         // 否则一块已经活跃的屏会被误当成「关着」而走进开屏分支。
         let active = service.activeDisplays()
-        reconcileDisabled(activeIDs: Set(active.map { $0.id }))
+        reconcileDisabled(active: active)
         // 当前关着 → 打开
         if disabled[id] != nil {
             guard service.setEnabled(id, true) else { return false }

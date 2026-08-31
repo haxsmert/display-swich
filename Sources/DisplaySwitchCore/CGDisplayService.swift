@@ -1,6 +1,7 @@
 import CoreGraphics
 import ColorSync
 import AppKit
+import IOKit
 import IOKit.ps
 
 /// SystemDisplayService 的真实实现。封装 CoreGraphics 枚举、私有断开符号、内建屏检测。
@@ -59,6 +60,40 @@ public final class CGDisplayService: SystemDisplayService {
         // 2) 便携机(有内建电池)→ 有内建屏(合盖时内建屏不在在线列表)。
         // 3) 都不满足 → 保守判定为「无内建屏」(宁可禁止全关,不冒险)。
         return Self.hasInternalBattery()
+    }
+
+    /// 物理连接着的外接屏数量。取自 IOKit 的 framebuffer 节点(`external` 且已建立 `Transport` 的),
+    /// 按 `IOMFBUUID` 去重——一条物理连接可能对应多个节点。
+    ///
+    /// 实测依据(M 系列 · macOS 26):同一块外接屏,软件关掉后 IOKit 仍报 1 条连接、
+    /// 物理拔线后报 0 条;而 CoreGraphics 在这两种情况下的表现完全一致,无从区分。
+    public func physicalExternalCount() -> Int? {
+        var iter: io_iterator_t = 0
+        // 查询失败一律返回 nil(不是 0):0 会被对账当成「屏全拔了」而清空记录,
+        // 把用户还连着、只是被软件关掉的屏误删——查不到时宁可什么都不做。
+        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+                                           IOServiceMatching("IOMobileFramebufferShim"),
+                                           &iter) == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(iter) }
+        var connections = Set<String>()
+        var svc = IOIteratorNext(iter)
+        while svc != 0 {
+            let props = Self.properties(of: svc)
+            // external:是外接口而非内建屏;Transport:该口上真的建立了连接(空闲口没有这个键)。
+            if (props["external"] as? Bool) ?? false, props["Transport"] != nil {
+                connections.insert((props["IOMFBUUID"] as? String) ?? "\(svc)")
+            }
+            IOObjectRelease(svc)
+            svc = IOIteratorNext(iter)
+        }
+        return connections.count
+    }
+
+    private static func properties(of service: io_object_t) -> [String: Any] {
+        var unmanaged: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let dict = unmanaged?.takeRetainedValue() as? [String: Any] else { return [:] }
+        return dict
     }
 
     public func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {

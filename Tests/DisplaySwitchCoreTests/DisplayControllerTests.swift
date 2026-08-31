@@ -9,15 +9,21 @@ final class MockService: SystemDisplayService {
     var setResult = true
     var supported = true
     var hasBuiltIn = false
+    /// 物理连着的外接屏(IOKit 视角):软件关屏不改变它,只有拔线才会。
+    private var physicallyConnected: Set<CGDirectDisplayID>
     private(set) var setCalls: [(id: CGDirectDisplayID, on: Bool)] = []
 
     init(all: [DisplayInfo]) {
         known = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
         activeIDs = Set(all.filter { $0.isActive }.map { $0.id })
+        physicallyConnected = Set(all.filter { !$0.isBuiltin }.map { $0.id })
     }
 
     var isSupported: Bool { supported }
     func hasBuiltInDisplay() -> Bool { hasBuiltIn }
+    /// nil 模拟「IOKit 查询失败」。
+    var physicalQueryFails = false
+    func physicalExternalCount() -> Int? { physicalQueryFails ? nil : physicallyConnected.count }
 
     func activeDisplays() -> [DisplayInfo] {
         known.values
@@ -50,6 +56,12 @@ final class MockService: SystemDisplayService {
     /// 不经过 app 的 toggle —— 这是真机上 disabled 状态变陈旧的来源。
     func externallyReactivate(_ id: CGDirectDisplayID) {
         activeIDs.insert(id)
+    }
+
+    /// 模拟「物理拔掉线」:该屏既不再活跃,IOKit 也看不到它的物理连接了。
+    func unplug(_ id: CGDirectDisplayID) {
+        activeIDs.remove(id)
+        physicallyConnected.remove(id)
     }
 }
 
@@ -206,4 +218,66 @@ func closingMainClearsMainOnDisabledAndTransfersLabel() {
     #expect(!item5.label.contains("（主）"))   // 已关闭的屏不再标主屏
     #expect(item2.isOn == true)
     #expect(item2.label.contains("（主）"))     // 转移后的新主屏
+}
+
+@Test("被关掉的外接屏遭物理拔线:菜单不再残留该屏")
+func unpluggedDisabledDisplayIsDropped() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.toggle(id: 4) == true)                       // app 关掉外接屏
+    #expect(ctrl.menuItems().count == 2)                      // 还连着 → 仍显示,可开回来
+    #expect(ctrl.menuItems().first { $0.id == 4 }?.isOn == false)
+
+    svc.unplug(4)                                             // 拔线
+    let items = ctrl.menuItems()
+    #expect(items.count == 1)                                 // 幽灵项消失
+    #expect(items.first?.id == 1)
+}
+
+@Test("被关掉的外接屏线还插着:绝不能被反向对账误删(否则再也开不回来)")
+func softDisabledDisplayIsKept() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)
+    // 连续多次读状态都不该把它清掉(物理连接仍在)。
+    for _ in 0..<3 { #expect(ctrl.menuItems().contains { $0.id == 4 && !$0.isOn }) }
+    #expect(ctrl.toggle(id: 4) == true)                       // 仍能正常开回来
+    #expect(ctrl.menuItems().first { $0.id == 4 }?.isOn == true)
+}
+
+@Test("两块外接屏都被关掉后只拔走一块:无从判定是哪块,一律保留不猜")
+func ambiguousUnplugKeepsRecords() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)
+    _ = ctrl.toggle(id: 5)
+    svc.unplug(4)                                             // 物理外接屏 2 → 1
+    // slots = 1 > 0:确知少了一块,但认不出是哪块 → 两条记录都保留,绝不误删。
+    #expect(ctrl.menuItems().count == 3)
+}
+
+@Test("拔线后所有被关的外接屏都清空,但内建屏的关闭记录不受影响")
+func reverseReconcileIgnoresBuiltin() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                                    // 关内建屏(外接屏还活跃)
+    svc.unplug(4)                                             // 再把外接屏拔走
+    // 内建屏的关闭记录必须留着(它没被拔,靠开盖/重开恢复),不能被反向对账误清。
+    #expect(ctrl.menuItems().contains { $0.id == 1 && !$0.isOn })
+}
+
+@Test("IOKit 查询失败时不做反向对账:绝不能因查不到就把还连着的屏误删")
+func physicalQueryFailureKeepsRecords() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)
+    svc.physicalQueryFails = true          // 查询坏了(返回 nil,而不是 0)
+    #expect(ctrl.menuItems().contains { $0.id == 4 && !$0.isOn })   // 记录必须留着
+    #expect(ctrl.toggle(id: 4) == true)                             // 仍能开回来
 }
