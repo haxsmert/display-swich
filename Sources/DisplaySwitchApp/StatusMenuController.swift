@@ -56,14 +56,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        let version = NSMenuItem(title: Self.versionText, action: nil, keyEquivalent: "")
-        version.isEnabled = false
+        let version = NSMenuItem(title: Self.versionText, action: #selector(openRepository), keyEquivalent: "")
+        version.target = self
+        version.toolTip = "在 GitHub 上查看本项目"
         menu.addItem(version)
         let quit = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = .command
         quit.target = self
         menu.addItem(quit)
     }
+
+    /// 项目仓库地址,点版本号即跳转。
+    private static let repositoryURL = "https://github.com/haxsmert/display-swich"
 
     /// 菜单底部显示的版本,取自 app bundle 的 Info.plist。
     /// 直接 `swift run` 起的开发构建没有 bundle 版本号,显示「开发构建」而不是编个假版本。
@@ -78,6 +82,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func toggleItem(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? CGDirectDisplayID else { return }
         controller.toggle(id: id)
+    }
+
+    /// 点版本号打开项目仓库。
+    @objc private func openRepository() {
+        guard let url = URL(string: Self.repositoryURL) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func quitApp() {
