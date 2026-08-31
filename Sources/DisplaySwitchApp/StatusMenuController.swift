@@ -56,10 +56,23 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        let version = NSMenuItem(title: Self.versionText, action: nil, keyEquivalent: "")
+        version.isEnabled = false
+        menu.addItem(version)
         let quit = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = .command
         quit.target = self
         menu.addItem(quit)
+    }
+
+    /// 菜单底部显示的版本,取自 app bundle 的 Info.plist。
+    /// 直接 `swift run` 起的开发构建没有 bundle 版本号,显示「开发构建」而不是编个假版本。
+    private static var versionText: String {
+        guard let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              !v.isEmpty else {
+            return "开发构建"
+        }
+        return "版本 \(v)"
     }
 
     @objc private func toggleItem(_ sender: NSMenuItem) {
