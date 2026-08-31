@@ -69,8 +69,18 @@ CGCompleteDisplayConfiguration(cfg, .forAppOnly)
 
 目标:**app 退出或崩溃时,所有被关的屏自动恢复**,永不出现「屏黑着却恢复不了」的死局。
 
-- **固定用 `.forAppOnly`**:配置仅在本进程存活期间有效,进程退出(含崩溃、被杀、强制重启)由系统自动回滚。已实测:`.forAppOnly` 下断开仍全局生效。
-- **多重兜底**:`applicationWillTerminate` 主动 re-enable 所有被本 app 关掉的屏 + `CGRestorePermanentDisplayConfiguration()`;app **启动时**先恢复一遍(防上次残留)。
+> ⚠️ 本节曾把「进程退出由系统自动回滚」写成已实测结论,2026-08-31 实测**推翻**。以下按「实测 / 推断」分别标注,勿再混写。
+
+- **恢复由 app 自己做,系统不代劳**。`CGSConfigureDisplayEnabled` 是一次性状态写入,写完就与调用进程无关。
+  - **实测**(M 系列 · macOS 26):裸进程关屏后立即退出,10 秒后该屏仍是断开的;另一个进程可以把它重新点亮。故断开状态**不绑定**在调用进程上,`.forAppOnly` 在这个私有调用上**不提供**「进程退出即回滚」。
+  - **实测**:`.forAppOnly` 下断开仍全局生效(这是本条唯一被早期验证过的部分)。
+- **正常退出**:`applicationWillTerminate` → `restoreAll()` **主动** re-enable 所有被本 app 关掉的屏。这是日常恢复的唯一实际路径。
+- **崩溃 / `kill -9`**:`restoreAll()` 来不及执行,屏会保持断开,**无系统兜底**。逃生靠下面的重启路径。
+- **重启可恢复**(逃生路径的依据):
+  - **实测**:关屏只会改写 `/Library/Preferences/com.apple.windowserver.displays.plist` 里显示器配置块的**先后顺序**(把关掉的挪到末尾),两份文件各自排序后差异为 0;该文件中**不存在** `Enabled`/`Disabled`/`Active` 之类字段。即断开状态**没有落盘**,只活在 WindowServer 内存里。
+  - **推断(未经一次真实重启实证)**:重启后 WindowServer 内存清空并重新枚举硬件,屏应恢复点亮。配合「永不开机自启」,重启后必为干净状态。
+  - **实测**:app 进程死 ≠ WindowServer 死——两者是不同进程,kill app 不清空 WindowServer 的状态,故**崩溃与重启效果不同**,不可混为一谈。
+- `CGRestorePermanentDisplayConfiguration()` 于启动时调用一次(历史兜底,对上述私有调用**未观察到**效果)。
 - **绝不使用 `.permanently`**(那是「断开后无法用代码恢复」死坑的来源)。
 
 ## 6. 显示器标识与命名

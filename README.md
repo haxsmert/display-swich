@@ -57,8 +57,10 @@ xattr -dr com.apple.quarantine /Applications/DisplaySwitch.app
 
 兜底恢复链:
 
-- 全程 `.forAppOnly`(**绝不** `.permanently`)→ 进程退出/崩溃/被杀,系统**自动回滚**所有被关的屏。
-- **永不开机自启**(硬约束)→ 万一遇到物理拔屏导致的全黑边界,**强制重启**后必为「所有屏正常、app 未运行」的干净状态。
+- **退出 app → 自动恢复**:`applicationWillTerminate` 主动把所有被关的屏开回来。(注:恢复是 app 做的,不是系统回滚——实测断开状态不绑定调用进程。)
+- **崩溃 / 被强杀**:app 来不及恢复,屏会保持关闭,此时走下面的重启路径。
+- **永不开机自启**(硬约束)→ 断开状态只存在于 WindowServer 内存、不落盘(实测),**重启**后即为「所有屏正常、app 未运行」的干净状态。
+- 全程 `.forAppOnly`,**绝不** `.permanently`。
 
 ## 说明
 
