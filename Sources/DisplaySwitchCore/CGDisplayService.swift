@@ -62,8 +62,8 @@ public final class CGDisplayService: SystemDisplayService {
         return Self.hasInternalBattery()
     }
 
-    /// 物理连接着的外接屏数量。取自 IOKit 的 framebuffer 节点(`external` 且已建立 `Transport` 的),
-    /// 按 `IOMFBUUID` 去重——一条物理连接可能对应多个节点。
+    /// 物理连接着的外接屏数量。取自 IOKit 的 framebuffer 节点:`external` + 已建立 `Transport`
+    /// + 带 `DisplayWidth`(链路那头确实挂着屏)。
     ///
     /// 实测依据(M 系列 · macOS 26):同一块外接屏,软件关掉后 IOKit 仍报 1 条连接、
     /// 物理拔线后报 0 条;而 CoreGraphics 在这两种情况下的表现完全一致,无从区分。
@@ -75,18 +75,27 @@ public final class CGDisplayService: SystemDisplayService {
                                            IOServiceMatching("IOMobileFramebufferShim"),
                                            &iter) == KERN_SUCCESS else { return nil }
         defer { IOObjectRelease(iter) }
-        var connections = Set<String>()
+        var count = 0
         var svc = IOIteratorNext(iter)
         while svc != 0 {
             let props = Self.properties(of: svc)
-            // external:是外接口而非内建屏;Transport:该口上真的建立了连接(空闲口没有这个键)。
-            if (props["external"] as? Bool) ?? false, props["Transport"] != nil {
-                connections.insert((props["IOMFBUUID"] as? String) ?? "\(svc)")
+            // 三个条件缺一不可:
+            //   external     —— 是外接口,不是内建屏;
+            //   Transport    —— 这个口已经建立链路(空闲口没有这个键);
+            //   DisplayWidth —— 链路那头确实挂着一块屏(拔线后此键消失)。
+            //
+            // ⚠️ 不能按 IOMFBUUID 去重:实测它是显示协处理器实例的 UUID,
+            // **多块外接屏共享同一个值**,去重会把 N 块屏数成 1 块,
+            // 于是对账把用户线还连着的屏当成拔线残留删掉(v1.0.2 的回归就是这么来的)。
+            if (props["external"] as? Bool) ?? false,
+               props["Transport"] != nil,
+               props["DisplayWidth"] != nil {
+                count += 1
             }
             IOObjectRelease(svc)
             svc = IOIteratorNext(iter)
         }
-        return connections.count
+        return count
     }
 
     private static func properties(of service: io_object_t) -> [String: Any] {
