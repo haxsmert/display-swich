@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 同一刻 `CGGetActiveDisplayList` 还报着拔线前的 3 块屏。v1.0.6 曾建在它上面,实为死代码。
         service.observeDisplayDisconnect { [weak self] in
             guard let self else { return }
-            RescueLog.write("拔线通知抵达:瞬时外接屏=\(self.service.liveExternalCount().map(String.init) ?? "查询失败")")
+            RescueLog.write("拔线通知抵达 | \(self.controller.blackoutDiagnostics())")
             self.rescueFromBlackout(attemptsLeft: 5)
         }
     }
@@ -46,7 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 幂等性:一次拔线内核会连着派发多条终止通知(实测一次拔线来了 6 条),
     /// 重复进入是常态——`rescueFromBlackout()` 在无需救援时返回 false,自行收手。
     private func rescueFromBlackout(attemptsLeft: Int) {
-        guard controller.rescueFromBlackout() else { return }   // 无需救援(或已恢复)→ 收手
+        guard controller.rescueFromBlackout() else {            // 无需救援(或已恢复)→ 收手
+            RescueLog.write("判定无需救援,不动手")
+            return
+        }
         RescueLog.write("已执行救援(剩余重试 \(attemptsLeft) 次),当前活跃屏 \(service.activeDisplays().count) 块")
         guard attemptsLeft > 0 else {
             RescueLog.write("⚠️ 重试用尽,仍未恢复")

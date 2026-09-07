@@ -146,6 +146,17 @@ public final class DisplayController {
         return true
     }
 
+    /// 救援判据的当前取值快照,供诊断日志记录。纯读,不产生任何副作用。
+    /// 全黑时界面全无,失败现场会随强制重启消失——不记下每个判据的实际取值,
+    /// 事后就只能靠推断分不清「判据否决了救援」和「压根没进判断」。
+    public func blackoutDiagnostics() -> String {
+        let all = disabled.values
+        let ext = all.filter { !$0.isBuiltin }.count
+        let live = service.liveExternalCount().map(String.init) ?? "查询失败"
+        return "本app已关屏=\(all.count)(内建 \(all.count - ext) / 外接 \(ext))"
+             + " | 瞬时外接屏=\(live) | 有内建面板=\(service.hasBuiltInDisplay())"
+    }
+
     /// 恢复所有被本 app 关闭的屏(app 退出兜底 / 全黑救援)。
     ///
     /// **只清掉真正恢复成功的那些**:系统调用失败却照样清记录,等于把失败谎报成成功——

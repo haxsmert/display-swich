@@ -550,3 +550,20 @@ func rescueUsesLiveCountNotTheLaggingOne() {
     #expect(ctrl.rescueFromBlackout() == true)
     #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
 }
+
+
+@Test("诊断快照如实反映判据,且不产生任何副作用")
+func diagnosticsReportsFactsWithoutSideEffects() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    let before = svc.setCalls.count
+
+    let text = ctrl.blackoutDiagnostics()
+    #expect(text.contains("本app已关屏=1"))
+    #expect(text.contains("内建 1"))
+    #expect(text.contains("瞬时外接屏=1"))
+    #expect(svc.setCalls.count == before)          // 纯读,一次系统调用都不发
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)   // 状态不被改动
+}
