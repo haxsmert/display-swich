@@ -281,3 +281,112 @@ func physicalQueryFailureKeepsRecords() {
     #expect(ctrl.menuItems().contains { $0.id == 4 && !$0.isOn })   // 记录必须留着
     #expect(ctrl.toggle(id: 4) == true)                             // 仍能开回来
 }
+
+// MARK: - 全黑兜底
+//
+// canDisable 只能校验「按下开关那一刻」:关内建屏时外接屏还活跃,判定合法、没错。
+// 但那块「兜底的活跃屏」可能在之后被物理拔走(拔拓展坞 / 拔线 / 外接屏断电),
+// 此时 WindowServer 仍记着被关的内建屏(.forAppOnly 不因拔线回滚)→ 活跃屏归零 → 全黑。
+// 全黑时用户点不开菜单栏,而本 app 的对账全挂在「菜单被打开」上 → 无法自愈的死局。
+
+@Test("关掉内建屏后拔走唯一活跃的外接屏(全黑):必须自动把内建屏开回来")
+func blackoutAfterUnplugIsRescued() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.toggle(id: 1) == true)          // 关内建屏(外接屏还活跃,合法)
+    svc.unplug(4)                                // 拔掉拓展坞,外接屏物理消失
+    #expect(svc.activeDisplays().isEmpty)        // 前提成立:确实一块活跃屏都不剩了
+
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })  // 内建屏被开回来
+    #expect(!svc.activeDisplays().isEmpty)                          // 不再全黑
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == true)    // 记录也同步清干净
+}
+
+@Test("还剩活跃屏时不救援:绝不擅自把用户关掉的屏开回来")
+func rescueSkippedWhileAnyDisplayActive() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                       // 关内建屏,外接屏仍活跃
+    let before = svc.setCalls.count
+
+    #expect(ctrl.rescueFromBlackout() == false)
+    #expect(svc.setCalls.count == before)                           // 一次 setEnabled 都不该发
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)   // 用户的关闭意图保留
+}
+
+@Test("没有任何屏是本 app 关的:即便查到 0 块活跃屏也不动手")
+func rescueSkippedWhenNothingDisabledByUs() {
+    let svc = MockService(all: [makeInfo(id: 4, x: 0)])
+    let ctrl = DisplayController(service: svc)
+    svc.unplug(4)                                // 屏是被拔走的,不是本 app 关的
+    #expect(svc.activeDisplays().isEmpty)
+
+    #expect(ctrl.rescueFromBlackout() == false)
+    #expect(svc.setCalls.isEmpty)                // 不该对不属于自己的屏发指令
+}
+
+@Test("救援后重复触发不再动手(已恢复,幂等)")
+func rescueIsIdempotent() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    svc.unplug(4)
+    #expect(ctrl.rescueFromBlackout() == true)
+    let before = svc.setCalls.count
+
+    #expect(ctrl.rescueFromBlackout() == false)
+    #expect(svc.setCalls.count == before)
+}
+
+@Test("关了两块屏后全黑:两块都开回来,不挑不猜")
+func rescueRestoresEveryDisplayWeDisabled() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                       // 关内建屏
+    _ = ctrl.toggle(id: 4)                       // 再关一块外接屏,剩 5 撑着
+    svc.unplug(5)                                // 拔走最后的活跃屏 → 全黑
+
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
+    #expect(svc.setCalls.contains { $0.id == 4 && $0.on == true })
+}
+
+@Test("恢复失败时不清记录:否则屏黑着、菜单里也没了那块屏,双重失联")
+func restoreAllKeepsRecordsWhenSystemCallFails() {
+    let svc = MockService(all: twoExternals())
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 3)
+    svc.setResult = false                        // 系统调用开始失败
+    ctrl.restoreAll()
+    // 屏没能开回来 → 记录必须留着,用户仍能在菜单里看到它、再点一次。
+    #expect(ctrl.menuItems().contains { $0.id == 3 && !$0.isOn })
+
+    svc.setResult = true                         // 系统恢复正常
+    ctrl.restoreAll()
+    #expect(ctrl.menuItems().first { $0.id == 3 }?.isOn == true)
+}
+
+@Test("救援时系统调用失败:可以再救一次(重试有意义),成功后才收手")
+func rescueStaysRetryableUntilItActuallyWorks() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    svc.unplug(4)                                // 全黑
+    svc.setResult = false                        // 这一刻 WindowServer 不接受配置
+
+    #expect(ctrl.rescueFromBlackout() == true)   // 试过了
+    #expect(svc.activeDisplays().isEmpty)        // 但没成功,仍然全黑
+    #expect(ctrl.rescueFromBlackout() == true)   // 记录还在 → 下一次还会再试
+
+    svc.setResult = true                         // 系统缓过来了
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(!svc.activeDisplays().isEmpty)       // 这次真的亮了
+    #expect(ctrl.rescueFromBlackout() == false)  // 已无需救援 → 收手,不再重试
+}

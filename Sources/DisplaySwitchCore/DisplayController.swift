@@ -107,11 +107,38 @@ public final class DisplayController {
         return true
     }
 
-    /// 恢复所有被本 app 关闭的屏(用于 app 退出兜底)。
+    /// 全黑兜底:只要「一块活跃屏都不剩、而本 app 还关着屏」,立刻把关掉的屏全开回来。
+    /// 返回是否真的执行了救援。
+    ///
+    /// 为什么 `canDisable` 不够:它只能校验**按下开关那一刻**——关内建屏时外接屏还活跃,
+    /// 判定合法、并没有错。错的是那之后世界会变:作兜底的那块活跃屏可能被物理拔走
+    /// (拔拓展坞 / 拔线 / 外接屏断电),而 WindowServer 仍记着被本 app 关掉的屏
+    /// (`.forAppOnly` 实测不因拔线回滚)→ 活跃屏归零 → 全黑。
+    ///
+    /// 为什么必须由系统事件驱动:本 app 其余的对账(`reconcileDisabled`)全都挂在
+    /// `menuItems()` / `toggle()` 上,也就是**只有用户点开菜单才会跑**;而全黑时
+    /// 用户根本点不开菜单栏,死局无法自愈,只能盲操作退屏或强制重启。
+    ///
+    /// 为什么全开而不是只开一块:全黑是紧急情况,「该开哪一块」的挑选逻辑既要多余的判据、
+    /// 又多一个出错面;全开与「退出 app」的既有语义一致,用户看见画面后随时能自己再关。
+    @discardableResult
+    public func rescueFromBlackout() -> Bool {
+        // 没关过任何屏 → 与本 app 无关(屏黑是别的原因),不动手也不查系统。
+        guard !disabled.isEmpty else { return false }
+        // 还有屏亮着 → 用户的关闭意图有效,绝不擅自开回来。
+        guard service.activeDisplays().isEmpty else { return false }
+        restoreAll()
+        return true
+    }
+
+    /// 恢复所有被本 app 关闭的屏(app 退出兜底 / 全黑救援)。
+    ///
+    /// **只清掉真正恢复成功的那些**:系统调用失败却照样清记录,等于把失败谎报成成功——
+    /// 屏还黑着,菜单里却连那块屏都没了,用户既看不见画面也点不回来(双重失联)。
+    /// 记录留着,菜单仍列得出它,救援下一轮也还能重试。
     public func restoreAll() {
-        for id in disabled.keys {
-            _ = service.setEnabled(id, true)
+        for id in Array(disabled.keys) where service.setEnabled(id, true) {
+            disabled[id] = nil
         }
-        disabled.removeAll()
     }
 }
