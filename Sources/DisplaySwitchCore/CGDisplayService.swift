@@ -98,11 +98,65 @@ public final class CGDisplayService: SystemDisplayService {
         return count
     }
 
+    /// 见协议注释:拔线瞬间即刻准确的外接屏计数,专供全黑救援。
+    /// 数 `IOPortTransportState`(基类,涵盖 DisplayPort / HDMI 等)下**带 EDID** 的节点——
+    /// 每块实际连着的屏一个,拔线时内核当场销毁,与终止通知同步。
+    public func liveExternalCount() -> Int? {
+        var iter: io_iterator_t = 0
+        // 同 physicalExternalCount:查不到返回 nil 而不是 0,绝不让「查询失败」被当成「屏拔光了」。
+        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+                                           IOServiceMatching("IOPortTransportState"),
+                                           &iter) == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(iter) }
+        var count = 0
+        var svc = IOIteratorNext(iter)
+        while svc != 0 {
+            if Self.properties(of: svc)["EDID"] != nil { count += 1 }
+            IOObjectRelease(svc)
+            svc = IOIteratorNext(iter)
+        }
+        return count
+    }
+
     private static func properties(of service: io_object_t) -> [String: Any] {
         var unmanaged: Unmanaged<CFMutableDictionary>?
         guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,
               let dict = unmanaged?.takeRetainedValue() as? [String: Any] else { return [:] }
         return dict
+    }
+
+    // MARK: - 拔线的内核事件监听
+
+    private var notificationPort: IONotificationPortRef?
+    private var terminationIterator: io_iterator_t = 0
+    private var disconnectHandler: (() -> Void)?
+
+    /// 挂到 `IOPortTransportState`(基类,一并覆盖 DisplayPort 与 HDMI 等传输类型)的终止通知上。
+    /// 拔线时该类下「每块实际连着的屏一个」的节点会被内核销毁,通知随即到达——零轮询。
+    /// 实测:未接屏时该类下带 EDID 的节点为 0 个,接两块外接屏后为 2 个,各带该屏的 EDID。
+    public func observeDisplayDisconnect(_ handler: @escaping () -> Void) {
+        disconnectHandler = handler
+        guard let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
+        notificationPort = port
+        // 回调派发到主队列:救援要动显示配置,必须在主线程,也便于与菜单逻辑共用同一串行上下文。
+        IONotificationPortSetDispatchQueue(port, .main)
+
+        let callback: IOServiceMatchingCallback = { context, iterator in
+            // 迭代器**必须排空**,否则内核不再派发后续通知(IOKit 的硬性约定)。
+            var found = false
+            var svc = IOIteratorNext(iterator)
+            while svc != 0 { found = true; IOObjectRelease(svc); svc = IOIteratorNext(iterator) }
+            guard found, let context else { return }
+            Unmanaged<CGDisplayService>.fromOpaque(context).takeUnretainedValue().disconnectHandler?()
+        }
+        IOServiceAddMatchingNotification(port, kIOTerminatedNotification,
+                                         IOServiceMatching("IOPortTransportState"),
+                                         callback,
+                                         Unmanaged.passUnretained(self).toOpaque(),
+                                         &terminationIterator)
+        // 注册后先排空一次:这是 IOKit 要求的「武装」动作,不做则一条通知都收不到。
+        var svc = IOIteratorNext(terminationIterator)
+        while svc != 0 { IOObjectRelease(svc); svc = IOIteratorNext(terminationIterator) }
     }
 
     public func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {

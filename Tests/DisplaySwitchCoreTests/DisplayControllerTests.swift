@@ -17,6 +17,7 @@ final class MockService: SystemDisplayService {
         known = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
         activeIDs = Set(all.filter { $0.isActive }.map { $0.id })
         physicallyConnected = Set(all.filter { !$0.isBuiltin }.map { $0.id })
+        liveConnected = physicallyConnected
     }
 
     var isSupported: Bool { supported }
@@ -25,11 +26,21 @@ final class MockService: SystemDisplayService {
     var physicalQueryFails = false
     func physicalExternalCount() -> Int? { physicalQueryFails ? nil : physicallyConnected.count }
 
+    /// 瞬时计数(带 EDID 的传输节点),与内核拔线通知同步。真机上它比上面那个快约 3.5 秒。
+    private var liveConnected: Set<CGDirectDisplayID>
+    func liveExternalCount() -> Int? { physicalQueryFails ? nil : liveConnected.count }
+
     func activeDisplays() -> [DisplayInfo] {
         known.values
             .filter { activeIDs.contains($0.id) }
             .sorted { $0.bounds.minX < $1.bounds.minX }
     }
+
+    /// 记下注册的拔线回调,测试可用 fireDisconnectNotification() 模拟内核通知到达。
+    private var disconnectHandler: (() -> Void)?
+    func observeDisplayDisconnect(_ handler: @escaping () -> Void) { disconnectHandler = handler }
+    /// 模拟内核的拔线终止通知抵达(真机上由 IOKit 派发)。
+    func fireDisconnectNotification() { disconnectHandler?() }
 
     func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {
         setCalls.append((id, on))
@@ -62,6 +73,27 @@ final class MockService: SystemDisplayService {
     func unplug(_ id: CGDirectDisplayID) {
         activeIDs.remove(id)
         physicallyConnected.remove(id)
+        liveConnected.remove(id)
+    }
+
+    /// 模拟**拔线那一瞬间**的真实状态:内核通知已到、带 EDID 的节点已归零,
+    /// 但 framebuffer 计数与 CG 活跃列表都还滞后着报旧数字(实测滞后约 3.5 秒)。
+    /// 救援就发生在这一刻,必须在这种状态下也判对。
+    func unplugAsSeenAtNotificationTime(_ id: CGDirectDisplayID) {
+        liveConnected.remove(id)
+    }
+
+    /// 模拟「显示器息屏」:CoreGraphics 活跃列表归零(实测确会如此——active 的定义含 awake),
+    /// 但线都还插着,IOKit 物理连接不变。用来锁住「息屏绝不能被当成全黑」。
+    func sleepAllDisplays() {
+        activeIDs.removeAll()
+    }
+
+    /// 模拟「CoreGraphics 读数陈旧」:线已经拔了(IOKit 侧都归零),
+    /// 但 CG 的活跃列表还报着拔线前的屏。实测拔线瞬间就是这个状态。
+    func unplugButLeaveStaleActiveList(_ id: CGDirectDisplayID) {
+        physicallyConnected.remove(id)
+        liveConnected.remove(id)
     }
 }
 
@@ -389,4 +421,132 @@ func rescueStaysRetryableUntilItActuallyWorks() {
     #expect(ctrl.rescueFromBlackout() == true)
     #expect(!svc.activeDisplays().isEmpty)       // 这次真的亮了
     #expect(ctrl.rescueFromBlackout() == false)  // 已无需救援 → 收手,不再重试
+}
+
+
+// MARK: - 救援判据不依赖 CoreGraphics(2026-09-07 拔线现场实测的两个缺陷)
+
+@Test("息屏让 CG 活跃屏归零:绝不能误当成全黑而擅自开屏")
+func sleepingDisplaysAreNotBlackout() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                       // 关内建屏,外接屏还亮着
+    svc.sleepAllDisplays()                       // 息屏 → CG 活跃屏归零(但线都插着)
+    #expect(svc.activeDisplays().isEmpty)        // 前提:CG 视角与全黑完全同形
+    let before = svc.setCalls.count
+
+    // 旧判据(activeDisplays().isEmpty)在这里会误救援;新判据看 IOKit,外接屏还连着 → 不动手。
+    #expect(ctrl.rescueFromBlackout() == false)
+    #expect(svc.setCalls.count == before)
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)   // 用户的关闭意图保留
+}
+
+@Test("拔线瞬间 CG 读数陈旧(还报着屏):必须照样判定全黑并救援")
+func staleActiveListStillTriggersRescue() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                              // 关内建屏
+    svc.unplugButLeaveStaleActiveList(4)                // 线拔了,但 CG 还报着 4 是活跃的
+    #expect(!svc.activeDisplays().isEmpty)              // 前提:CG 仍在骗人
+
+    // 旧判据会因为「还有活跃屏」而不救援 → 用户全黑;新判据看 IOKit,已归零 → 救。
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
+}
+
+@Test("台式机(无内建屏):关掉一块、拔走另一块 → 救回还连着的那块")
+func desktopRescuesTheStillConnectedDisplay() {
+    let svc = MockService(all: [makeInfo(id: 4, x: 0), makeInfo(id: 5, x: 1920)])
+    svc.hasBuiltIn = false                              // Mac mini 之类,没有内建屏面板
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.toggle(id: 4) == true)                 // 关掉 4,5 还亮着
+    svc.unplug(5)                                       // 拔走 5 → 只剩被关掉的 4 还连着
+
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 4 && $0.on == true })
+}
+
+@Test("关的是外接屏、内建屏亮着:拔走那块外接屏也不该救援")
+func unpluggingDisabledExternalWhileBuiltinLitIsNotBlackout() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)                              // 关外接屏(内建屏始终亮着)
+    svc.unplug(4)
+    let before = svc.setCalls.count
+
+    #expect(ctrl.rescueFromBlackout() == false)         // 内建屏好好亮着,没有全黑
+    #expect(svc.setCalls.count == before)
+}
+
+@Test("关了内建屏和一块外接屏,另一块外接屏还亮着:不算全黑")
+func remainingLitExternalPreventsRescue() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                              // 关内建
+    _ = ctrl.toggle(id: 4)                              // 关一块外接,5 还亮着
+    let before = svc.setCalls.count
+
+    // 物理外接屏 2 块 > 本 app 关掉的外接屏 1 块 ⇒ 至少有一块亮着。
+    #expect(ctrl.rescueFromBlackout() == false)
+    #expect(svc.setCalls.count == before)
+}
+
+@Test("IOKit 查询失败时绝不救援:查不到物理连接就无法证明有屏被拔走")
+func rescueSkippedWhenPhysicalQueryFails() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    svc.unplug(4)
+    svc.physicalQueryFails = true                       // IOKit 查询坏了(返回 nil,不是 0)
+    let before = svc.setCalls.count
+
+    #expect(ctrl.rescueFromBlackout() == false)
+    #expect(svc.setCalls.count == before)
+}
+
+@Test("装配链路:内核拔线通知抵达 → 救援真的被执行(v1.0.6 断的就是这一环)")
+func kernelDisconnectNotificationTriggersRescue() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    // 按 AppDelegate 的方式装配:把救援挂到拔线事件上。
+    var rescued = false
+    svc.observeDisplayDisconnect { rescued = ctrl.rescueFromBlackout() }
+
+    _ = ctrl.toggle(id: 1)                       // 关内建屏(外接屏还亮着,合法)
+    svc.fireDisconnectNotification()             // 此刻还没拔线 → 不该救
+    #expect(rescued == false)
+
+    svc.unplug(4)                                // 拔掉拓展坞
+    svc.fireDisconnectNotification()             // 内核通知抵达
+    #expect(rescued == true)
+    #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
+    #expect(!svc.activeDisplays().isEmpty)       // 屏亮回来了
+
+    svc.fireDisconnectNotification()             // 同一次拔线的重复通知(实测一次来 6 条)
+    #expect(rescued == false)                    // 幂等,不重复动手
+}
+
+
+@Test("拔线那一刻 framebuffer 计数还滞后着报旧数:救援必须照样判对(否则等于不救)")
+func rescueUsesLiveCountNotTheLaggingOne() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                                   // 关内建屏
+
+    svc.unplugAsSeenAtNotificationTime(4)                    // 内核通知到达的那一刻
+    #expect(svc.physicalExternalCount() == 1)                // 滞后的计数还报着 1 块屏
+    #expect(svc.liveExternalCount() == 0)                    // 瞬时计数已归零
+    #expect(!svc.activeDisplays().isEmpty)                   // CG 也还陈旧
+
+    // 用滞后计数会得出「还有屏亮着」而不救 → 用户全黑。必须用瞬时计数。
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
 }

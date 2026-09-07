@@ -107,26 +107,41 @@ public final class DisplayController {
         return true
     }
 
-    /// 全黑兜底:只要「一块活跃屏都不剩、而本 app 还关着屏」,立刻把关掉的屏全开回来。
-    /// 返回是否真的执行了救援。
+    /// 全黑兜底:拔线导致「一块能亮的屏都不剩」时,把本 app 关掉的屏开回来。返回是否执行了救援。
     ///
-    /// 为什么 `canDisable` 不够:它只能校验**按下开关那一刻**——关内建屏时外接屏还活跃,
+    /// 为什么 `canDisable` 不够:它只校验**按下开关那一刻**——关内建屏时外接屏还活跃,
     /// 判定合法、并没有错。错的是那之后世界会变:作兜底的那块活跃屏可能被物理拔走
     /// (拔拓展坞 / 拔线 / 外接屏断电),而 WindowServer 仍记着被本 app 关掉的屏
-    /// (`.forAppOnly` 实测不因拔线回滚)→ 活跃屏归零 → 全黑。
+    /// (`.forAppOnly` 实测不因拔线回滚)→ 一块能亮的都不剩 → 全黑。
+    /// 而本 app 其余的对账全挂在 `menuItems()` / `toggle()` 上,即**只有用户点开菜单才会跑**;
+    /// 全黑时用户根本点不开菜单栏,死局无法自愈,只能强制重启。
     ///
-    /// 为什么必须由系统事件驱动:本 app 其余的对账(`reconcileDisabled`)全都挂在
-    /// `menuItems()` / `toggle()` 上,也就是**只有用户点开菜单才会跑**;而全黑时
-    /// 用户根本点不开菜单栏,死局无法自愈,只能盲操作退屏或强制重启。
+    /// **判据完全不用 CoreGraphics 的活跃屏列表**,只用 IOKit 物理真相 + 本 app 自己的关闭记录。
+    /// 实测(M 系列 · macOS 26 · 2026-09-07,拔拓展坞现场抓的日志):
+    ///   - 拔线瞬间 IOKit 带 EDID 的显示节点已归零,而同一刻 `CGGetActiveDisplayList`
+    ///     仍报拔线前的 3 块屏(陈旧缓存);
+    ///   - 且拔线**根本不派发** `CGDisplayRegisterReconfigurationCallback`(全程 0 次)。
+    ///   即 CoreGraphics 在拔线这件事上**既不通知、读数又陈旧**,不能作判据——
+    ///   这也是 v1.0.6 那版救援实际上从不触发的原因。
     ///
-    /// 为什么全开而不是只开一块:全黑是紧急情况,「该开哪一块」的挑选逻辑既要多余的判据、
-    /// 又多一个出错面;全开与「退出 app」的既有语义一致,用户看见画面后随时能自己再关。
+    /// 判据(P = IOKit 物理外接屏数,D = 本 app 关掉的外接屏数):
+    ///   `P ≤ D` → 物理还在的外接屏可能全是被本 app 关掉的那些,即外接屏可能一块都不亮;
+    ///   再加上「内建屏也被本 app 关掉、或这台机器根本没有内建屏面板」→ 判定全黑。
+    /// 该判据对「拔掉的到底是哪一块」不敏感,故不需要区分——而区分正是做不到的事。
     @discardableResult
     public func rescueFromBlackout() -> Bool {
-        // 没关过任何屏 → 与本 app 无关(屏黑是别的原因),不动手也不查系统。
+        // 没关过任何屏 → 屏黑与本 app 无关,不动手也不查系统。
         guard !disabled.isEmpty else { return false }
-        // 还有屏亮着 → 用户的关闭意图有效,绝不擅自开回来。
-        guard service.activeDisplays().isEmpty else { return false }
+        // 查不到物理连接就什么都不做:无法证明任何一块屏已被拔走。
+        // 用 liveExternalCount 而非 physicalExternalCount:救援就发生在拔线通知到达那一刻,
+        // 而后者实测滞后约 3.5 秒才归零(见协议注释),那时拿到的还是拔线前的旧数字。
+        guard let physical = service.liveExternalCount() else { return false }
+        let disabledExternals = disabled.values.filter { !$0.isBuiltin }.count
+        // 还有外接屏没被本 app 关掉 → 它亮着,不是全黑。
+        guard physical <= disabledExternals else { return false }
+        // 内建屏还能亮(有面板且没被本 app 关掉)→ 不是全黑,绝不擅自开屏。
+        let builtinDisabledByUs = disabled.values.contains { $0.isBuiltin }
+        guard !(service.hasBuiltInDisplay() && !builtinDisabledByUs) else { return false }
         restoreAll()
         return true
     }
