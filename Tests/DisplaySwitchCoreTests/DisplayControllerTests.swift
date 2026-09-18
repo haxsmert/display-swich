@@ -57,9 +57,20 @@ final class MockService: SystemDisplayService {
     /// 模拟合盖(只改状态,不派发事件——合上盖子不是「内建屏可能可用」的时刻)。
     func closeLid() { clamshellClosed = true }
 
+    /// 模拟真机枚举里混着的**空槽位**(没接屏的接口):它们会出现在列表里,但点亮必失败。
+    var emptySlots: [CGDirectDisplayID] = []
+    /// 模拟私有符号 CGSGetDisplayList 不可用。
+    var displayListUnavailable = false
+    func inactiveDisplayIDs() -> [CGDirectDisplayID]? {
+        guard !displayListUnavailable else { return nil }
+        return known.keys.filter { !activeIDs.contains($0) }.sorted() + emptySlots
+    }
+
     func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {
         setCalls.append((id, on))
         guard setResult else { return false }
+        // 空槽位:真机实测立刻返回错误 1001(0.0 秒,不阻塞)。
+        guard !emptySlots.contains(id) else { return false }
         if on {
             activeIDs.insert(id)
         } else {
@@ -732,4 +743,62 @@ func unpluggedDisplayStaysHidden() {
     // 反复查看都不该冒出来;5 和内建屏正常显示。
     for _ in 0..<3 { #expect(!ctrl.menuItems().contains { $0.id == 4 }) }
     #expect(ctrl.menuItems().count == 2)
+}
+
+
+// MARK: - 启动兜底:直接问系统,不依赖记账
+
+@Test("记账全丢也能救回来:启动时直接问系统要真相")
+func startupRevivesOrphansWithoutAnyBookkeeping() {
+    // 模拟 app 崩溃后重启:记账是空的,但系统里那块屏仍然关着。
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, active: false, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    // 记账空 → 菜单里看不到它。这正是 2026-09-18 的失联现场。
+    #expect(!ctrl.menuItems().contains { $0.id == 4 })
+
+    #expect(ctrl.reviveOrphanedDisplays() == 1)
+    #expect(svc.activeDisplays().contains { $0.id == 4 })   // 屏点亮了
+    #expect(ctrl.menuItems().contains { $0.id == 4 })       // 菜单里也回来了
+}
+
+@Test("候选里混着空槽位:对它们的调用失败,不影响真屏被救回")
+func emptySlotsDoNotBlockRevival() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, active: false, x: 1920)])
+    svc.hasBuiltIn = true
+    svc.emptySlots = [7, 8]                                 // 真机枚举里必然混着这些
+    let ctrl = DisplayController(service: svc)
+
+    #expect(ctrl.reviveOrphanedDisplays() == 1)             // 只有真屏算数
+    #expect(svc.setCalls.contains { $0.id == 7 })           // 空槽也试过(实测不阻塞,无害)
+    #expect(svc.activeDisplays().contains { $0.id == 4 })
+}
+
+@Test("私有符号不可用:静默不动手,绝不瞎开屏")
+func revivalSkippedWhenSymbolMissing() {
+    let svc = MockService(all: [makeInfo(id: 4, active: false, x: 0)])
+    svc.displayListUnavailable = true
+    let ctrl = DisplayController(service: svc)
+
+    #expect(ctrl.reviveOrphanedDisplays() == 0)
+    #expect(svc.setCalls.isEmpty)
+}
+
+@Test("同型号两块屏:关掉其一后编号不漂移——这正是记账要留着的理由")
+func numberingStaysStableViaBookkeeping() {
+    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "Mi Monitor"),
+                                makeInfo(id: 5, x: 1920, name: "Mi Monitor")])
+    let ctrl = DisplayController(service: svc)
+    let before = ctrl.menuItems()
+    let label4 = before.first { $0.id == 4 }?.label
+    let label5 = before.first { $0.id == 5 }?.label
+    #expect(label4 != nil && label4 != label5)              // 同名两块屏各有稳定编号
+
+    _ = ctrl.toggle(id: 4)                                  // 关掉其中一块
+    let after = ctrl.menuItems()
+    // 系统枚举不知道被关那块叫什么(UUID 都解析不出),编号全靠记账里的快照维持。
+    #expect(after.first { $0.id == 4 }?.label == label4)
+    #expect(after.first { $0.id == 5 }?.label == label5)
 }

@@ -190,6 +190,24 @@ public final class DisplayController {
              + " | 瞬时外接屏=\(live) | 有内建面板=\(service.hasBuiltInDisplay())"
     }
 
+    /// 启动兜底:把系统里「上一次进程遗留的、还关着的屏」全部点亮。返回真正点亮的块数。
+    ///
+    /// 这一步**完全不依赖本 app 的记账**,直接问系统要真相 —— 因为记账恰恰在这种场景下是空的:
+    /// 进程一死(崩溃 / 被强杀 / 注销)记录就没了,而被关闭的状态留在 WindowServer 里
+    /// **不会自己恢复**。那块屏于是既不在活跃列表、也不在记账里,菜单上根本看不到 ——
+    /// 彻底失联,用户只能重启整台机器。2026-09-18 真实发生过一次。
+    ///
+    /// 只在启动时做:此刻记账必然是空的,系统里任何「存在但没点亮」的屏都是上次的遗留,
+    /// 点亮它们既安全、也符合「app 启动即回到干净状态」的既有语义(§7.2 的逃生链条依赖它)。
+    /// 候选里混着空槽位,对它们的调用会立刻失败(实测 0.0 秒,不阻塞),无害。
+    @discardableResult
+    public func reviveOrphanedDisplays() -> Int {
+        guard let candidates = service.inactiveDisplayIDs() else { return 0 }
+        var revived = 0
+        for id in candidates where service.setEnabled(id, true) { revived += 1 }
+        return revived
+    }
+
     /// 恢复所有被本 app 关闭的屏(app 退出兜底 / 全黑救援)。
     ///
     /// **只清掉真正恢复成功的那些**:系统调用失败却照样清记录,等于把失败谎报成成功——

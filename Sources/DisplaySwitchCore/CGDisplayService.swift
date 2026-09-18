@@ -7,12 +7,35 @@ import IOKit.ps
 /// SystemDisplayService 的真实实现。封装 CoreGraphics 枚举、私有断开符号、内建屏检测。
 public final class CGDisplayService: SystemDisplayService {
     private typealias ConfigEnabledFn = @convention(c) (CGDisplayConfigRef?, CGDirectDisplayID, Bool) -> CGError
+    /// `CGSGetDisplayList(maxCount, outIDs, outCount)` —— 列出所有显示器,**包含被禁用的**。
+    private typealias GetDisplayListFn =
+        @convention(c) (UInt32, UnsafeMutablePointer<CGDirectDisplayID>?, UnsafeMutablePointer<UInt32>?) -> CGError
     private let cgsConfigureDisplayEnabled: ConfigEnabledFn?
+    private let cgsGetDisplayList: GetDisplayListFn?
 
     public init() {
         let handle = UnsafeMutableRawPointer(bitPattern: -2) // RTLD_DEFAULT
         let sym = dlsym(handle, "CGSConfigureDisplayEnabled")
         cgsConfigureDisplayEnabled = sym.map { unsafeBitCast($0, to: ConfigEnabledFn.self) }
+        let listSym = dlsym(handle, "CGSGetDisplayList")
+        cgsGetDisplayList = listSym.map { unsafeBitCast($0, to: GetDisplayListFn.self) }
+    }
+
+    /// 见协议注释:直接问系统要「存在但未点亮」的屏,不依赖任何记账。
+    public func inactiveDisplayIDs() -> [CGDirectDisplayID]? {
+        guard let fn = cgsGetDisplayList else { return nil }
+        var count: UInt32 = 0
+        guard fn(0, nil, &count) == .success else { return nil }
+        guard count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard fn(count, &ids, &count) == .success else { return nil }
+        // 合盖时内建屏本来就不活跃,那是正常状态而非「被关着」;
+        // 且此刻对它调点亮会阻塞约 20 秒(实测),必须排除。
+        let lidClosed = (isClamshellClosed() == true)
+        return ids.prefix(Int(count)).filter { id in
+            guard CGDisplayIsActive(id) == 0 else { return false }
+            return !(lidClosed && CGDisplayIsBuiltin(id) != 0)
+        }
     }
 
     /// 是否支持显示器开关:私有符号可用 **且** 运行在 Apple Silicon 硬件上。

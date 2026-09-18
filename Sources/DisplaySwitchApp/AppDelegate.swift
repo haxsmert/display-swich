@@ -10,9 +10,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // 只在菜单栏,不进 Dock
 
-        // 启动兜底:若上次以 .forSession 关屏后异常退出,残留的断开屏在此恢复。
-        // .forAppOnly 模式下本调用无副作用(配置已随上次进程退出回滚)。
+        // 启动兜底之一:公开 API 的历史遗留兜底(对本 app 用的私有调用实测无效,保留无害)。
         CGRestorePermanentDisplayConfiguration()
+
+        // 启动兜底之二:**直接问系统**要「存在但没点亮」的屏,把上次遗留的全部救回来。
+        //
+        // 这一步不依赖任何记账,因为记账恰恰在这种场景下是空的:上次进程若是崩溃 / 被强杀 /
+        // 注销而死,关闭记录随之消失,而被关闭的状态留在 WindowServer 里不会自己恢复——
+        // 那块屏既不在活跃列表也不在记账里,菜单上根本看不到,用户只能重启整台机器。
+        let revived = controller.reviveOrphanedDisplays()
+        if revived > 0 {
+            RescueLog.write("启动兜底:点亮了 \(revived) 块上次遗留的关闭屏")
+        }
 
         menuController = StatusMenuController(controller: controller)
 
