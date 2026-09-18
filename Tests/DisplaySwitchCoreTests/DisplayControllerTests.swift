@@ -98,6 +98,14 @@ final class MockService: SystemDisplayService {
         liveConnected.remove(id)
     }
 
+    /// 模拟「线插回来」:物理连接恢复,但该屏在系统里**仍然是关闭状态**——它不会自己亮。
+    /// 这正是 2026-09-18 失联事故的关键:被关闭的状态跟着显示器走,不跟着线走。
+    func replug(_ id: CGDirectDisplayID) {
+        physicallyConnected.insert(id)
+        liveConnected.insert(id)
+        // 刻意不加进 activeIDs。
+    }
+
     /// 模拟「显示器息屏」:CoreGraphics 活跃列表归零(实测确会如此——active 的定义含 awake),
     /// 但线都还插着,IOKit 物理连接不变。用来锁住「息屏绝不能被当成全黑」。
     func sleepAllDisplays() {
@@ -603,8 +611,11 @@ func rescueSkipsUnpluggedExternalIDs() {
     // 4 已被拔走、它的 display ID 已失效:对它下指令实测会阻塞约 20 秒才失败,
     // 还连累同一轮里真正能救的内建屏;何况屏都不在了,恢复它也毫无意义。
     #expect(!after.contains { $0.id == 4 })
-    // 失效记录同时被清掉,不留幽灵项。
-    #expect(!ctrl.menuItems().contains { $0.id == 4 })
+    // ⚠️ 但记录**必须保留**:那块屏在 WindowServer 里仍是关闭状态,线插回来时它不会自己亮。
+    // app 若此刻已经忘了它,菜单里看不到、也点不开 → 彻底失联(v1.0.9/v1.0.10 的真实回归)。
+    let base2 = svc.setCalls.count
+    ctrl.restoreAll()
+    #expect(svc.setCalls[base2...].contains { $0.id == 4 })
 }
 
 @Test("全黑但盖子合着:不做注定失败的尝试,记录留着等开盖")
@@ -688,4 +699,37 @@ func lidOpenWithoutBlackoutIsSilent() {
     #expect(ctrl.needsBlackoutRescue() == false)
     #expect(svc.setCalls.count == base)         // 绝不擅自把用户关掉的内建屏开回来
     #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)
+}
+
+
+@Test("外接屏拔走后又插回来:菜单里必须还能看到它,否则彻底失联")
+func repluggedDisabledDisplayStaysReachable() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)                                  // 关掉外接屏(内建屏亮着)
+    #expect(ctrl.menuItems().contains { $0.id == 4 })
+
+    svc.unplug(4)                                           // 拔线
+    #expect(!ctrl.menuItems().contains { $0.id == 4 })      // 不留幽灵项(v1.0.3 的目标)
+
+    svc.replug(4)                                           // 线插回来——它仍是关闭状态,不会自己亮
+    // 2026-09-18 事故就卡在这:记录被删了,菜单里再也看不到它,只能靠私有接口枚举才捞回来。
+    #expect(ctrl.menuItems().contains { $0.id == 4 })
+    #expect(ctrl.menuItems().first { $0.id == 4 }?.isOn == false)
+    #expect(ctrl.toggle(id: 4) == true)                     // 点一下就能开回来
+    #expect(svc.activeDisplays().contains { $0.id == 4 })
+}
+
+@Test("拔走的屏一直没插回来:始终不显示,也不影响其他屏")
+func unpluggedDisplayStaysHidden() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)
+    svc.unplug(4)
+    // 反复查看都不该冒出来;5 和内建屏正常显示。
+    for _ in 0..<3 { #expect(!ctrl.menuItems().contains { $0.id == 4 }) }
+    #expect(ctrl.menuItems().count == 2)
 }

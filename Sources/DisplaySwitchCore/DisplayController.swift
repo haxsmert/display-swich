@@ -34,23 +34,25 @@ public final class DisplayController {
     private func reconcileDisabled(active: [DisplayInfo]) {
         let activeIDs = Set(active.map { $0.id })
         disabled = disabled.filter { !activeIDs.contains($0.key) }
+        // 反向对账**不再删除记录**,改由 `canShowDisabledExternals` 在渲染时过滤,原因见那里。
+    }
 
-        let disabledExternals = disabled.values.filter { !$0.isBuiltin }
-        guard !disabledExternals.isEmpty else { return }
-        // 查不到物理连接就什么都不做:此时无法证明任何一块屏已被拔走,
-        // 而误删的代价是用户再也开不回那块屏。
-        guard let physical = service.physicalExternalCount() else { return }
-        // 还能容下几块「被我关着的外接屏」= 物理连着的外接屏 − 已经活跃的外接屏。
-        let slots = physical - active.filter { !$0.isBuiltin }.count
-        if slots <= 0 {
-            // 一块都容不下 → 这些记录全是拔线后的残留,清掉。
-            for d in disabledExternals { disabled[d.id] = nil }
-        }
-        // slots 大于 0 却少于记录数:确知有屏被拔走了,但无从判定是哪几块
-        // (实测 IOKit 的 IOMFBUUID 与 CoreGraphics 的 display UUID 不是同一套标识,对不上)。
-        // 此时不猜、一律保留:多显示一项的代价,远小于误删一块还连着、用户正等着开回来的屏。
-        //
-        // 内建屏不参与反向对账:它不会被「拔掉」,合盖也只是暂时不活跃,开盖即回。
+    /// 被本 app 关掉的外接屏,物理上是否还有位置容纳它们 —— 决定它们**显不显示**,而不是删不删。
+    ///
+    /// 拔走后物理数减少 → 返回 false → 菜单里不出现(不留幽灵项,这是 v1.0.3 的目标);
+    /// 线插回来后物理数恢复 → 返回 true → 重新出现,用户点一下就能开回来。
+    ///
+    /// ⚠️ 为什么不能像以前那样直接删记录:**被关闭的状态是跟着显示器走的,不跟着线走**。
+    /// 那块屏在 WindowServer 里仍然是关闭状态,线插回来时它不会自己亮;记录一删,
+    /// app 就忘了它,菜单里看不到、也点不开 → 彻底失联。
+    /// 2026-09-18 真实发生过:一块小米屏插回来后从菜单里消失,最后是靠私有接口
+    /// `CGSGetDisplayList` 枚举出「被禁用的屏」才捞回来的。
+    ///
+    /// 查不到物理连接(`nil`)时一律显示:宁可多显示一项(点了无效、实测不阻塞),
+    /// 也不能让用户开不回一块还连着的屏。
+    private func canShowDisabledExternals(active: [DisplayInfo]) -> Bool {
+        guard let physical = service.physicalExternalCount() else { return true }
+        return physical - active.filter { !$0.isBuiltin }.count > 0
     }
 
     /// 是否存在「可开盖恢复的内建屏」兜底:机器有内建屏面板,且内建屏当前未被本 app 软件关闭。
@@ -64,7 +66,11 @@ public final class DisplayController {
         let active = service.activeDisplays()
         reconcileDisabled(active: active)
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
+        // 被关掉的外接屏若已被物理拔走就不显示(不留幽灵),插回来则重新显示(不失联)。
+        // 内建屏不受此限:它不会被拔走,合盖也只是暂时不活跃。
+        let showDisabledExternals = canShowDisabledExternals(active: active)
         for d in disabled.values {
+            guard d.isBuiltin || showDisabledExternals else { continue }
             // 已被本 app 断开的屏不可能是主屏:显示时清除 isMain,
             // 否则关掉主屏后(主屏角色转移给另一块)会出现两块都标「主屏」的错乱。
             byID[d.id] = DisplayInfo(id: d.id, uuid: d.uuid, name: d.name, bounds: d.bounds,
@@ -152,22 +158,24 @@ public final class DisplayController {
     public func rescueFromBlackout() -> Bool {
         guard needsBlackoutRescue() else { return false }
 
-        // 外接屏一块都不在了 → 那些记录对应的 display ID **已经失效**,直接丢弃、绝不对它们下指令。
-        // 实测(2026-09-18 事故):对失效 ID 调配置 API 不会立刻失败,而是阻塞约 20 秒才超时,
-        // 还连累了同一轮里真正能救的内建屏;一轮 20 秒 × 5 次重试 = 主线程卡死 3 分半。
-        // 何况屏都被拔走了,「恢复」它本身也没有任何意义。
-        if service.liveExternalCount() == 0 {
-            for d in disabled.values where !d.isBuiltin { disabled[d.id] = nil }
-        }
+        // 外接屏一块都不在了 → 这一轮只可能靠内建屏解除全黑,跳过那些屏的恢复调用。
+        //
+        // ⚠️ 但**绝不丢弃它们的记录**。被关闭的状态是跟着**显示器**走的,不是跟着线走的:
+        // 那些屏在 WindowServer 里仍然是关闭状态,线插回来时它们不会自己亮。
+        // 若 app 此时已经忘了它们,菜单里看不到、也点不开,就彻底失联了——
+        // 这正是 v1.0.9/v1.0.10 的回归:一块小米屏插回来后从菜单里消失,
+        // 只能靠私有接口 CGSGetDisplayList 枚举出被禁用的屏才捞回来。
+        // 记录留着,插回来时菜单仍列得出它,用户点一下就能开。
+        let onlyBuiltInCanHelp = (service.liveExternalCount() == 0)
 
-        // 只剩内建屏要救,而盖子合着:它物理上不可用,现在点亮只会阻塞约 20 秒后失败。
-        // 不做这种注定失败的尝试,等开盖事件——那才是它重新可用的时刻。
+        // 只剩内建屏能救,而盖子合着:它物理上不可用,现在点亮注定失败(实测阻塞约 20 秒)。
+        // 不做这种尝试,等开盖——那才是它重新可用的时刻。
         // 记录原样留着,开盖时 needsBlackoutRescue() 依然成立,救援会重新触发。
-        if disabled.values.allSatisfy({ $0.isBuiltin }), service.isClamshellClosed() == true {
+        if onlyBuiltInCanHelp, service.isClamshellClosed() == true {
             return false
         }
 
-        restoreAll()
+        restoreAll(where: onlyBuiltInCanHelp ? { $0.isBuiltin } : { _ in true })
         return true
     }
 
@@ -187,9 +195,11 @@ public final class DisplayController {
     /// **只清掉真正恢复成功的那些**:系统调用失败却照样清记录,等于把失败谎报成成功——
     /// 屏还黑着,菜单里却连那块屏都没了,用户既看不见画面也点不回来(双重失联)。
     /// 记录留着,菜单仍列得出它,救援下一轮也还能重试。
-    public func restoreAll() {
-        for id in Array(disabled.keys) where service.setEnabled(id, true) {
-            disabled[id] = nil
+    /// `shouldRestore` 限定这一轮恢复哪些屏(默认全部)。**被跳过的记录原样保留**——
+    /// 跳过只是「这次先不试」,不是「这块屏不用管了」。
+    public func restoreAll(where shouldRestore: (DisplayInfo) -> Bool = { _ in true }) {
+        for d in Array(disabled.values) where shouldRestore(d) && service.setEnabled(d.id, true) {
+            disabled[d.id] = nil
         }
     }
 }
