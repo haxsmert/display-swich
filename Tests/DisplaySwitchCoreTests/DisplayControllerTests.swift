@@ -42,6 +42,21 @@ final class MockService: SystemDisplayService {
     /// 模拟内核的拔线终止通知抵达(真机上由 IOKit 派发)。
     func fireDisconnectNotification() { disconnectHandler?() }
 
+    /// 盖子状态。`nil` 模拟查不到(非便携机 / 查询失败)。
+    var clamshellClosed: Bool? = false
+    func isClamshellClosed() -> Bool? { clamshellClosed }
+
+    /// 记下「开盖 / 唤醒」回调,测试可用 openLid() 模拟。
+    private var builtInAvailableHandler: (() -> Void)?
+    func observeBuiltInMayBecomeAvailable(_ handler: @escaping () -> Void) { builtInAvailableHandler = handler }
+    /// 模拟开盖:盖子打开 + 事件派发(真机上走 NSWorkspace 唤醒通知或 IOPMrootDomain 属性变化)。
+    func openLid() {
+        clamshellClosed = false
+        builtInAvailableHandler?()
+    }
+    /// 模拟合盖(只改状态,不派发事件——合上盖子不是「内建屏可能可用」的时刻)。
+    func closeLid() { clamshellClosed = true }
+
     func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {
         setCalls.append((id, on))
         guard setResult else { return false }
@@ -566,4 +581,111 @@ func diagnosticsReportsFactsWithoutSideEffects() {
     #expect(text.contains("瞬时外接屏=1"))
     #expect(svc.setCalls.count == before)          // 纯读,一次系统调用都不发
     #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)   // 状态不被改动
+}
+
+// MARK: - 合盖 / 开盖(2026-09-18 事故:拔坞合盖走人,到新地点开盖仍全黑)
+
+@Test("外接屏已被拔走:绝不对它失效的 display ID 下恢复指令")
+func rescueSkipsUnpluggedExternalIDs() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                      // 关内建屏(外接屏还亮着,合法)
+    _ = ctrl.toggle(id: 4)                      // 再关一块外接屏(5 还亮着,合法)
+    svc.unplug(4); svc.unplug(5)                // 拔掉拓展坞 → 全黑
+    let base = svc.setCalls.count
+
+    #expect(ctrl.rescueFromBlackout() == true)
+    let after = svc.setCalls[base...]
+    // 内建屏要救。
+    #expect(after.contains { $0.id == 1 && $0.on == true })
+    // 4 已被拔走、它的 display ID 已失效:对它下指令实测会阻塞约 20 秒才失败,
+    // 还连累同一轮里真正能救的内建屏;何况屏都不在了,恢复它也毫无意义。
+    #expect(!after.contains { $0.id == 4 })
+    // 失效记录同时被清掉,不留幽灵项。
+    #expect(!ctrl.menuItems().contains { $0.id == 4 })
+}
+
+@Test("全黑但盖子合着:不做注定失败的尝试,记录留着等开盖")
+func rescueDeferredWhileLidClosed() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    svc.closeLid()
+    svc.unplug(4)                               // 合着盖拔线 → 全黑
+    let base = svc.setCalls.count
+
+    #expect(ctrl.needsBlackoutRescue() == true)  // 确实全黑
+    #expect(ctrl.rescueFromBlackout() == false)  // 但此刻不动手
+    #expect(svc.setCalls.count == base)          // 一次系统调用都没发(否则要白等 20 秒)
+    #expect(ctrl.needsBlackoutRescue() == true)  // 记录留着,开盖时还会救
+}
+
+@Test("复现 2026-09-18 事故:合盖拔坞走人 → 到新地点开盖 → 内建屏必须自动亮回来")
+func lidOpenAfterBlackoutRescuesBuiltIn() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    // 按 AppDelegate 的方式装配**两个**触发源。
+    svc.observeDisplayDisconnect { _ = ctrl.rescueFromBlackout() }
+    svc.observeBuiltInMayBecomeAvailable { _ = ctrl.rescueFromBlackout() }
+
+    _ = ctrl.toggle(id: 1)                      // 关内建屏
+    _ = ctrl.toggle(id: 4)                      // 关一块外接屏
+    svc.closeLid()                              // 合盖
+    svc.unplug(4); svc.unplug(5)                // 拔坞走人 → 全黑
+    svc.fireDisconnectNotification()
+    #expect(svc.activeDisplays().isEmpty)       // 合盖期间救不回来,仍全黑(事故当时就卡在这)
+
+    svc.openLid()                               // 到新地点开盖
+    #expect(!svc.activeDisplays().isEmpty)      // 内建屏自动亮回来
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == true)
+}
+
+@Test("合盖但外接屏还连着:照救不误——合盖只挡内建屏,不挡外接屏")
+func rescueProceedsWhileLidClosedIfExternalStillConnected() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                      // 关内建
+    _ = ctrl.toggle(id: 4)                      // 关外接 4
+    svc.unplug(5)                               // 拔走 5;4 还连着,只是被关了 → 全黑
+    svc.closeLid()
+
+    // 4 还物理连着,点亮它当场就能解除全黑,不必等开盖。
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 4 && $0.on == true })
+}
+
+@Test("盖子状态查不到:按没合盖处理照样尝试,不能因查询失败而不救")
+func rescueProceedsWhenClamshellUnknown() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    svc.unplug(4)
+    svc.clamshellClosed = nil                   // 台式机 / 查询失败
+
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
+}
+
+@Test("开盖事件很频繁:不需要救援时必须完全静默,不误开任何屏")
+func lidOpenWithoutBlackoutIsSilent() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    svc.observeBuiltInMayBecomeAvailable { _ = ctrl.rescueFromBlackout() }
+    _ = ctrl.toggle(id: 1)                      // 关内建屏,外接屏还亮着 —— 没有全黑
+    let base = svc.setCalls.count
+
+    svc.openLid()                               // 反复开合盖
+    svc.closeLid(); svc.openLid()
+    #expect(ctrl.needsBlackoutRescue() == false)
+    #expect(svc.setCalls.count == base)         // 绝不擅自把用户关掉的内建屏开回来
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)
 }

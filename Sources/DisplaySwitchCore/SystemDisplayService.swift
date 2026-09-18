@@ -39,6 +39,25 @@ public protocol SystemDisplayService {
     /// 同一次拔线会连着回调多次(实测一次拔线来了 6 条),故 handler 必须幂等。
     func observeDisplayDisconnect(_ handler: @escaping () -> Void)
 
+    /// 盖子当前是否合着(IOKit `IOPMrootDomain` 的 `AppleClamshellState`)。
+    /// `nil` = 查不到 / 非便携机——查不到时按「没合盖」处理,宁可试一次,不要因为查询失败而不救。
+    ///
+    /// 为什么救援必须知道:**合盖时内建屏物理上不可用**,此刻对它调「点亮」不会立刻失败,
+    /// 而是**阻塞约 20 秒**才超时返回 false(2026-09-18 事故现场实测)。5 次重试拖了 3 分半、
+    /// 期间主线程被占满连菜单都点不开,而用户早已合盖离开。
+    /// 正确做法是合盖时不做这种注定失败的尝试,等开盖——那才是内建屏重新可用的时刻。
+    func isClamshellClosed() -> Bool?
+
+    /// 注册「内建屏可能重新变得可用」的时刻:开盖、系统唤醒、屏幕唤醒。
+    ///
+    /// 这是全黑救援的**第二个触发源**,与拔线事件同等必要。只挂拔线是不够的——
+    /// 真实动线是「拔坞 → 合盖 → 走人 → 到新地点开盖」:拔线那一刻盖子往往已经合上,
+    /// 救援必然失败;而开盖时**不会再有任何拔线事件**,救援就永远没有第二次机会。
+    /// (2026-09-18 事故:重试用尽后到新地点开盖,屏仍是黑的,只能强制重启。)
+    ///
+    /// 该事件源很频繁(每次电源状态变化都来),handler 必须幂等,且在无需救援时完全静默。
+    func observeBuiltInMayBecomeAvailable(_ handler: @escaping () -> Void)
+
     /// 启用/断开某块屏,返回是否成功。
     func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool
 }

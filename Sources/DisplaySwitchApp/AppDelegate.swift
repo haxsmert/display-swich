@@ -16,18 +16,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuController = StatusMenuController(controller: controller)
 
-        // 全黑救援的触发源:拔线的**内核事件**。
+        // ——— 全黑救援的两个触发源,缺一不可 ———
         //
-        // 没有它,救援逻辑永远不会被执行:本 app 其余的状态对账全都挂在「菜单被打开」上,
+        // 没有触发源,救援逻辑永远不会被执行:本 app 其余的状态对账全都挂在「菜单被打开」上,
         // 而全黑时用户根本点不开菜单栏。
         //
+        // ① 拔线:全黑**发生**的那一刻。
         // 为什么不是 `CGDisplayRegisterReconfigurationCallback`——实测(2026-09-07 拔拓展坞现场):
         // 拔线与插回全程该回调**一次都没派发**(它只对配置变更如改分辨率派发);
         // 同一刻 `CGGetActiveDisplayList` 还报着拔线前的 3 块屏。v1.0.6 曾建在它上面,实为死代码。
         service.observeDisplayDisconnect { [weak self] in
-            guard let self else { return }
-            RescueLog.write("拔线通知抵达 | \(self.controller.blackoutDiagnostics())")
-            self.rescueFromBlackout(attemptsLeft: 5)
+            self?.attemptRescue(trigger: "拔线通知抵达")
+        }
+        // ② 开盖 / 唤醒:全黑**能被解除**的那一刻。
+        // 只挂 ① 是不够的:真实动线是「拔坞 → 合盖 → 走人 → 到新地点开盖」,拔线那一刻盖子
+        // 往往已经合上,内建屏物理不可用、救援注定失败;而开盖时不会再有任何拔线事件,
+        // 救援就永远没有第二次机会。2026-09-18 事故正是如此——重试用尽后到新地点开盖,
+        // 屏仍是黑的,只能强制重启。
+        service.observeBuiltInMayBecomeAvailable { [weak self] in
+            self?.attemptRescue(trigger: "开盖 / 唤醒")
         }
     }
 
@@ -35,28 +42,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.restoreAll()
     }
 
-    /// 全黑救援 + 有界重试。
+    /// 全黑救援 + 有界重试。两个触发源共用,`trigger` 只用于日志区分。
     ///
-    /// 为什么要重试:拔线那一刻 WindowServer 正在收拾残局,配置调用可能被拒。
-    /// 而一旦拒了就没有第二次机会——屏已经全黑,不会再有拔线事件来触发本回调,
-    /// 用户也点不开菜单栏,只能强制重启。
-    /// 为什么可以直接重试:`restoreAll()` 只清恢复成功的记录,失败的还留着,
-    /// 所以再调一次就是自然的重试;一旦真的亮起来,下一轮即返回 false 自行收手。
+    /// 重试的意义:全黑那一刻 WindowServer 正在收拾残局,配置调用可能被拒。
+    /// 但重试**不再是最后一道防线**——用尽之后,开盖 / 唤醒会重新触发全新的一轮。
+    /// 这正是 2026-09-18 事故缺的那一环:当时重试用尽即永久放弃。
     ///
-    /// 幂等性:一次拔线内核会连着派发多条终止通知(实测一次拔线来了 6 条),
-    /// 重复进入是常态——`rescueFromBlackout()` 在无需救援时返回 false,自行收手。
-    private func rescueFromBlackout(attemptsLeft: Int) {
-        guard controller.rescueFromBlackout() else {            // 无需救援(或已恢复)→ 收手
-            RescueLog.write("判定无需救援,不动手")
+    /// 幂等性:两个事件源都会重复派发(一次拔线实测来 6 条,电源事件更频繁),
+    /// 重复进入是常态——`needsBlackoutRescue()` 在无需救援时直接静默返回。
+    private func attemptRescue(trigger: String, attemptsLeft: Int = 5) {
+        // 必须先问「需不需要」再写日志:开盖 / 唤醒这个事件源很频繁,
+        // 无需救援时若也记一行,日志会被刷爆,真正的事故现场反而淹没在噪声里。
+        guard controller.needsBlackoutRescue() else { return }
+        RescueLog.write("\(trigger) | \(controller.blackoutDiagnostics())")
+
+        guard controller.rescueFromBlackout() else {
+            RescueLog.write("  → 全黑,但盖子合着:内建屏此刻物理不可用,不做注定失败的尝试,等开盖")
             return
         }
-        RescueLog.write("已执行救援(剩余重试 \(attemptsLeft) 次),当前活跃屏 \(service.activeDisplays().count) 块")
+        RescueLog.write("  → 已下恢复指令(剩余重试 \(attemptsLeft) 次),当前活跃屏 \(service.activeDisplays().count) 块")
         guard attemptsLeft > 0 else {
-            RescueLog.write("⚠️ 重试用尽,仍未恢复")
+            RescueLog.write("  ⚠️ 重试用尽;若仍黑着,开盖 / 唤醒会重新触发一轮")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            self?.rescueFromBlackout(attemptsLeft: attemptsLeft - 1)
+            self?.attemptRescue(trigger: trigger, attemptsLeft: attemptsLeft - 1)
         }
     }
 }
@@ -65,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 ///
 /// 为什么非要有:全黑时用户看不到任何界面,菜单栏也点不开——救援若失败,现场随强制重启一起消失,
 /// 事后无从判断「通知到底到没到、判据是多少、恢复调用成没成」。日志是这条路径唯一的黑匣子。
-/// 只在救援相关事件发生时写,平时一个字节都不产生。
+/// 2026-09-18 的事故能在几分钟内定位到确切环节,全靠它。只在救援相关事件发生时写,平时不产生一个字节。
 enum RescueLog {
     private static let url = FileManager.default
         .homeDirectoryForCurrentUser

@@ -128,8 +128,8 @@ public final class DisplayController {
     ///   `P ≤ D` → 物理还在的外接屏可能全是被本 app 关掉的那些,即外接屏可能一块都不亮;
     ///   再加上「内建屏也被本 app 关掉、或这台机器根本没有内建屏面板」→ 判定全黑。
     /// 该判据对「拔掉的到底是哪一块」不敏感,故不需要区分——而区分正是做不到的事。
-    @discardableResult
-    public func rescueFromBlackout() -> Bool {
+    /// 当前是否处于「需要救援的全黑」。**纯读,不动手**,故可被高频事件源随意调用。
+    public func needsBlackoutRescue() -> Bool {
         // 没关过任何屏 → 屏黑与本 app 无关,不动手也不查系统。
         guard !disabled.isEmpty else { return false }
         // 查不到物理连接就什么都不做:无法证明任何一块屏已被拔走。
@@ -142,6 +142,31 @@ public final class DisplayController {
         // 内建屏还能亮(有面板且没被本 app 关掉)→ 不是全黑,绝不擅自开屏。
         let builtinDisabledByUs = disabled.values.contains { $0.isBuiltin }
         guard !(service.hasBuiltInDisplay() && !builtinDisabledByUs) else { return false }
+        return true
+    }
+
+    /// 执行救援。返回**是否真的对系统下了恢复指令**——
+    /// `false` 有两种含义:不需要救(见 `needsBlackoutRescue`),或需要救但此刻注定失败(合盖)。
+    /// 调用方要区分二者,先问 `needsBlackoutRescue()`。
+    @discardableResult
+    public func rescueFromBlackout() -> Bool {
+        guard needsBlackoutRescue() else { return false }
+
+        // 外接屏一块都不在了 → 那些记录对应的 display ID **已经失效**,直接丢弃、绝不对它们下指令。
+        // 实测(2026-09-18 事故):对失效 ID 调配置 API 不会立刻失败,而是阻塞约 20 秒才超时,
+        // 还连累了同一轮里真正能救的内建屏;一轮 20 秒 × 5 次重试 = 主线程卡死 3 分半。
+        // 何况屏都被拔走了,「恢复」它本身也没有任何意义。
+        if service.liveExternalCount() == 0 {
+            for d in disabled.values where !d.isBuiltin { disabled[d.id] = nil }
+        }
+
+        // 只剩内建屏要救,而盖子合着:它物理上不可用,现在点亮只会阻塞约 20 秒后失败。
+        // 不做这种注定失败的尝试,等开盖事件——那才是它重新可用的时刻。
+        // 记录原样留着,开盖时 needsBlackoutRescue() 依然成立,救援会重新触发。
+        if disabled.values.allSatisfy({ $0.isBuiltin }), service.isClamshellClosed() == true {
+            return false
+        }
+
         restoreAll()
         return true
     }

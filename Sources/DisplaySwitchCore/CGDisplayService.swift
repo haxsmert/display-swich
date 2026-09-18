@@ -159,6 +159,50 @@ public final class CGDisplayService: SystemDisplayService {
         while svc != 0 { IOObjectRelease(svc); svc = IOIteratorNext(terminationIterator) }
     }
 
+    // MARK: - 盖子:开盖是内建屏重新可用的唯一时刻
+
+    private var lidPort: IONotificationPortRef?
+    private var lidIterator: io_object_t = 0
+    private var builtInAvailableHandler: (() -> Void)?
+
+    /// 见协议注释。读 `IOPMrootDomain` 的 `AppleClamshellState`。
+    public func isClamshellClosed() -> Bool? {
+        let root = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard root != 0 else { return nil }
+        defer { IOObjectRelease(root) }
+        guard let value = IORegistryEntryCreateCFProperty(root, "AppleClamshellState" as CFString,
+                                                          kCFAllocatorDefault, 0)?
+                .takeRetainedValue() as? Bool else { return nil }
+        return value
+    }
+
+    /// 见协议注释。**两条路都挂上**,因为开盖会走哪一条取决于系统当时睡没睡:
+    ///   ① `NSWorkspace` 的唤醒通知——合盖导致睡眠(实测本机 `AppleClamshellCausesSleep = Yes`)后,
+    ///      开盖是「唤醒」,走这条;
+    ///   ② `IOPMrootDomain` 的属性变化——系统没睡(如仍接着电源)时开盖只是属性变了,走这条。
+    /// 两条都可能空炮或重复触发,故 handler 必须幂等、且在无需救援时完全静默。
+    public func observeBuiltInMayBecomeAvailable(_ handler: @escaping () -> Void) {
+        builtInAvailableHandler = handler
+
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in handler() }
+        }
+
+        let root = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard root != 0 else { return }
+        defer { IOObjectRelease(root) }
+        guard let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
+        lidPort = port
+        IONotificationPortSetDispatchQueue(port, .main)
+        let callback: IOServiceInterestCallback = { context, _, _, _ in
+            guard let context else { return }
+            Unmanaged<CGDisplayService>.fromOpaque(context).takeUnretainedValue().builtInAvailableHandler?()
+        }
+        IOServiceAddInterestNotification(port, root, kIOGeneralInterest, callback,
+                                         Unmanaged.passUnretained(self).toOpaque(), &lidIterator)
+    }
+
     public func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {
         guard let fn = cgsConfigureDisplayEnabled else { return false }
         var cfg: CGDisplayConfigRef?
