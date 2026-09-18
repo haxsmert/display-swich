@@ -81,12 +81,19 @@ enum RescueLog {
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/DisplaySwitch.log")
 
+    /// 与**上一条**完全相同的消息不重复写。
+    /// 事件源天然会重复派发(一次拔线实测来 6 条终止通知),状态没变时消息也一字不差——
+    /// 重复记录只会把真正的现场淹没。只比上一条,所以状态变过又变回来仍会重新记录。
+    private static var lastMessage: String?
+
     static func write(_ message: String) {
+        guard message != lastMessage else { return }
+        lastMessage = message
         let stamp = ISO8601DateFormatter().string(from: Date())
         guard let data = "[\(stamp)] \(message)\n".data(using: .utf8) else { return }
         if let handle = try? FileHandle(forWritingTo: url) {
             defer { try? handle.close() }
-            try? handle.seekToEnd()
+            _ = try? handle.seekToEnd()
             try? handle.write(contentsOf: data)
         } else {
             try? data.write(to: url)

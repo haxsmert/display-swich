@@ -164,6 +164,7 @@ public final class CGDisplayService: SystemDisplayService {
     private var lidPort: IONotificationPortRef?
     private var lidIterator: io_object_t = 0
     private var builtInAvailableHandler: (() -> Void)?
+    private var lidEdge = LidEdgeDetector(initiallyClosed: false)
 
     /// 见协议注释。读 `IOPMrootDomain` 的 `AppleClamshellState`。
     public func isClamshellClosed() -> Bool? {
@@ -195,12 +196,24 @@ public final class CGDisplayService: SystemDisplayService {
         guard let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
         lidPort = port
         IONotificationPortSetDispatchQueue(port, .main)
+        // 注册那一刻的盖子状态作为比较基线。
+        lidEdge = LidEdgeDetector(initiallyClosed: isClamshellClosed() ?? false)
         let callback: IOServiceInterestCallback = { context, _, _, _ in
             guard let context else { return }
-            Unmanaged<CGDisplayService>.fromOpaque(context).takeUnretainedValue().builtInAvailableHandler?()
+            Unmanaged<CGDisplayService>.fromOpaque(context).takeUnretainedValue().lidStateMayHaveChanged()
         }
         IOServiceAddInterestNotification(port, root, kIOGeneralInterest, callback,
                                          Unmanaged.passUnretained(self).toOpaque(), &lidIterator)
+    }
+
+    /// `IOPMrootDomain` 的电源通知抵达。**只有盖子刚刚打开才往上报**。
+    ///
+    /// 这个过滤必须做在这一层:该通知是「电源状态变了」而不是「盖子开了」,合盖期间会持续派发,
+    /// 而合盖期间的结论恒定不变(内建屏不可用)。若每条都往上抛,上层就要反复查 IOKit、
+    /// 反复算判据、反复写日志,答案却从头到尾一样——那是纯粹的浪费,实测一分半钟就抛了二十多条。
+    private func lidStateMayHaveChanged() {
+        guard lidEdge.didOpen(nowClosed: isClamshellClosed() ?? false) else { return }
+        builtInAvailableHandler?()
     }
 
     public func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool {
