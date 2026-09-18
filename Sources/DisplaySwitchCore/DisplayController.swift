@@ -50,8 +50,14 @@ public final class DisplayController {
     ///
     /// 查不到物理连接(`nil`)时一律显示:宁可多显示一项(点了无效、实测不阻塞),
     /// 也不能让用户开不回一块还连着的屏。
+    ///
+    /// ⚠️ 必须用 `liveExternalCount`(带 EDID 的传输节点),**不能用 `physicalExternalCount`**:
+    /// 后者数的是 framebuffer 的 `DisplayWidth`,而屏一被禁用这个键就消失,于是它**数不到
+    /// 被关掉的屏**——正是这里要找的那一类。实测(2026-09-18):两块外接屏、其中一块被关掉时,
+    /// `physicalExternalCount` 报 1、`liveExternalCount` 报 2,用前者算出「没有位置」,
+    /// 那块屏就被从菜单里藏了起来,用户再也点不开。
     private func canShowDisabledExternals(active: [DisplayInfo]) -> Bool {
-        guard let physical = service.physicalExternalCount() else { return true }
+        guard let physical = service.liveExternalCount() else { return true }
         return physical - active.filter { !$0.isBuiltin }.count > 0
     }
 

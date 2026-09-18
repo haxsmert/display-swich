@@ -117,6 +117,12 @@ final class MockService: SystemDisplayService {
         // 刻意不加进 activeIDs。
     }
 
+    /// 模拟真机缺陷:屏被禁用后 framebuffer 的 `DisplayWidth` 键消失,
+    /// 于是 physicalExternalCount 数不到它;而 liveExternalCount(EDID)不受影响,照样数得到。
+    func disableHidesFromFramebufferCount(_ id: CGDirectDisplayID) {
+        physicallyConnected.remove(id)
+    }
+
     /// 模拟「显示器息屏」:CoreGraphics 活跃列表归零(实测确会如此——active 的定义含 awake),
     /// 但线都还插着,IOKit 物理连接不变。用来锁住「息屏绝不能被当成全黑」。
     func sleepAllDisplays() {
@@ -801,4 +807,23 @@ func numberingStaysStableViaBookkeeping() {
     // 系统枚举不知道被关那块叫什么(UUID 都解析不出),编号全靠记账里的快照维持。
     #expect(after.first { $0.id == 4 }?.label == label4)
     #expect(after.first { $0.id == 5 }?.label == label5)
+}
+
+
+@Test("被关掉的屏让 framebuffer 计数低报:菜单仍必须显示它,否则用户再也点不开")
+func disabledExternalStaysVisibleDespiteLowFramebufferCount() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)                              // 关掉一块外接屏(5 还亮着)
+    svc.disableHidesFromFramebufferCount(4)             // 真机行为:framebuffer 计数少了它
+
+    #expect(svc.physicalExternalCount() == 1)           // 低报——数不到被关掉的那块
+    #expect(svc.liveExternalCount() == 2)               // 正确——EDID 不受禁用影响
+
+    // 用低报的那个判据会算出「没有位置容纳被关的屏」→ 把它从菜单里藏起来,用户再也点不开。
+    #expect(ctrl.menuItems().contains { $0.id == 4 })
+    #expect(ctrl.menuItems().first { $0.id == 4 }?.isOn == false)
+    #expect(ctrl.toggle(id: 4) == true)                 // 点一下就能开回来
 }
