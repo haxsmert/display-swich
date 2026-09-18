@@ -9,26 +9,21 @@ final class MockService: SystemDisplayService {
     var setResult = true
     var supported = true
     var hasBuiltIn = false
-    /// 物理连着的外接屏(IOKit 视角):软件关屏不改变它,只有拔线才会。
-    private var physicallyConnected: Set<CGDirectDisplayID>
     private(set) var setCalls: [(id: CGDirectDisplayID, on: Bool)] = []
 
     init(all: [DisplayInfo]) {
         known = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
         activeIDs = Set(all.filter { $0.isActive }.map { $0.id })
-        physicallyConnected = Set(all.filter { !$0.isBuiltin }.map { $0.id })
-        liveConnected = physicallyConnected
+        liveConnected = Set(all.filter { !$0.isBuiltin }.map { $0.id })
     }
 
     var isSupported: Bool { supported }
     func hasBuiltInDisplay() -> Bool { hasBuiltIn }
-    /// nil 模拟「IOKit 查询失败」。
-    var physicalQueryFails = false
-    func physicalExternalCount() -> Int? { physicalQueryFails ? nil : physicallyConnected.count }
-
-    /// 瞬时计数(带 EDID 的传输节点),与内核拔线通知同步。真机上它比上面那个快约 3.5 秒。
+    /// 物理连着的外接屏(带 EDID 的传输节点)——本 app 唯一的物理连接真相。
+    /// 软件关屏不改变它,只有拔线才会。`liveQueryFails` 模拟 IOKit 查询失败(返回 nil)。
+    var liveQueryFails = false
     private var liveConnected: Set<CGDirectDisplayID>
-    func liveExternalCount() -> Int? { physicalQueryFails ? nil : liveConnected.count }
+    func liveExternalCount() -> Int? { liveQueryFails ? nil : liveConnected.count }
 
     func activeDisplays() -> [DisplayInfo] {
         known.values
@@ -98,12 +93,11 @@ final class MockService: SystemDisplayService {
     /// 模拟「物理拔掉线」:该屏既不再活跃,IOKit 也看不到它的物理连接了。
     func unplug(_ id: CGDirectDisplayID) {
         activeIDs.remove(id)
-        physicallyConnected.remove(id)
         liveConnected.remove(id)
     }
 
     /// 模拟**拔线那一瞬间**的真实状态:内核通知已到、带 EDID 的节点已归零,
-    /// 但 framebuffer 计数与 CG 活跃列表都还滞后着报旧数字(实测滞后约 3.5 秒)。
+    /// 但 CoreGraphics 的活跃列表还陈旧着,报的是拔线前的屏数。
     /// 救援就发生在这一刻,必须在这种状态下也判对。
     func unplugAsSeenAtNotificationTime(_ id: CGDirectDisplayID) {
         liveConnected.remove(id)
@@ -112,15 +106,8 @@ final class MockService: SystemDisplayService {
     /// 模拟「线插回来」:物理连接恢复,但该屏在系统里**仍然是关闭状态**——它不会自己亮。
     /// 这正是 2026-09-18 失联事故的关键:被关闭的状态跟着显示器走,不跟着线走。
     func replug(_ id: CGDirectDisplayID) {
-        physicallyConnected.insert(id)
         liveConnected.insert(id)
         // 刻意不加进 activeIDs。
-    }
-
-    /// 模拟真机缺陷:屏被禁用后 framebuffer 的 `DisplayWidth` 键消失,
-    /// 于是 physicalExternalCount 数不到它;而 liveExternalCount(EDID)不受影响,照样数得到。
-    func disableHidesFromFramebufferCount(_ id: CGDirectDisplayID) {
-        physicallyConnected.remove(id)
     }
 
     /// 模拟「显示器息屏」:CoreGraphics 活跃列表归零(实测确会如此——active 的定义含 awake),
@@ -132,7 +119,6 @@ final class MockService: SystemDisplayService {
     /// 模拟「CoreGraphics 读数陈旧」:线已经拔了(IOKit 侧都归零),
     /// 但 CG 的活跃列表还报着拔线前的屏。实测拔线瞬间就是这个状态。
     func unplugButLeaveStaleActiveList(_ id: CGDirectDisplayID) {
-        physicallyConnected.remove(id)
         liveConnected.remove(id)
     }
 }
@@ -349,7 +335,7 @@ func physicalQueryFailureKeepsRecords() {
     svc.hasBuiltIn = true
     let ctrl = DisplayController(service: svc)
     _ = ctrl.toggle(id: 4)
-    svc.physicalQueryFails = true          // 查询坏了(返回 nil,而不是 0)
+    svc.liveQueryFails = true          // 查询坏了(返回 nil,而不是 0)
     #expect(ctrl.menuItems().contains { $0.id == 4 && !$0.isOn })   // 记录必须留着
     #expect(ctrl.toggle(id: 4) == true)                             // 仍能开回来
 }
@@ -543,7 +529,7 @@ func rescueSkippedWhenPhysicalQueryFails() {
     let ctrl = DisplayController(service: svc)
     _ = ctrl.toggle(id: 1)
     svc.unplug(4)
-    svc.physicalQueryFails = true                       // IOKit 查询坏了(返回 nil,不是 0)
+    svc.liveQueryFails = true                       // IOKit 查询坏了(返回 nil,不是 0)
     let before = svc.setCalls.count
 
     #expect(ctrl.rescueFromBlackout() == false)
@@ -574,19 +560,18 @@ func kernelDisconnectNotificationTriggersRescue() {
 }
 
 
-@Test("拔线那一刻 framebuffer 计数还滞后着报旧数:救援必须照样判对(否则等于不救)")
-func rescueUsesLiveCountNotTheLaggingOne() {
+@Test("拔线那一刻 CoreGraphics 还报着旧屏数:救援必须照样判对(否则等于不救)")
+func rescueJudgesCorrectlyWhileCoreGraphicsIsStale() {
     let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
     svc.hasBuiltIn = true
     let ctrl = DisplayController(service: svc)
     _ = ctrl.toggle(id: 1)                                   // 关内建屏
 
     svc.unplugAsSeenAtNotificationTime(4)                    // 内核通知到达的那一刻
-    #expect(svc.physicalExternalCount() == 1)                // 滞后的计数还报着 1 块屏
-    #expect(svc.liveExternalCount() == 0)                    // 瞬时计数已归零
+    #expect(svc.liveExternalCount() == 0)                    // 物理判据当场归零
     #expect(!svc.activeDisplays().isEmpty)                   // CG 也还陈旧
 
-    // 用滞后计数会得出「还有屏亮着」而不救 → 用户全黑。必须用瞬时计数。
+    // 信 CoreGraphics 会得出「还有屏亮着」而不救 → 用户全黑。判据必须是 IOKit 物理真相。
     #expect(ctrl.rescueFromBlackout() == true)
     #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
 }
@@ -810,20 +795,16 @@ func numberingStaysStableViaBookkeeping() {
 }
 
 
-@Test("被关掉的屏让 framebuffer 计数低报:菜单仍必须显示它,否则用户再也点不开")
-func disabledExternalStaysVisibleDespiteLowFramebufferCount() {
+@Test("被关掉但线还连着的屏:菜单必须列出它,点一下就能开回来")
+func disabledExternalStaysVisibleWhileConnected() {
     let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
                                 makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
     svc.hasBuiltIn = true
     let ctrl = DisplayController(service: svc)
     _ = ctrl.toggle(id: 4)                              // 关掉一块外接屏(5 还亮着)
-    svc.disableHidesFromFramebufferCount(4)             // 真机行为:framebuffer 计数少了它
 
-    #expect(svc.physicalExternalCount() == 1)           // 低报——数不到被关掉的那块
-    #expect(svc.liveExternalCount() == 2)               // 正确——EDID 不受禁用影响
-
-    // 用低报的那个判据会算出「没有位置容纳被关的屏」→ 把它从菜单里藏起来,用户再也点不开。
-    #expect(ctrl.menuItems().contains { $0.id == 4 })
+    #expect(svc.liveExternalCount() == 2)               // 线还连着两块 —— 它没被拔走
+    #expect(ctrl.menuItems().contains { $0.id == 4 })   // 所以菜单必须列出它
     #expect(ctrl.menuItems().first { $0.id == 4 }?.isOn == false)
     #expect(ctrl.toggle(id: 4) == true)                 // 点一下就能开回来
 }

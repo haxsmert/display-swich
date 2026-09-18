@@ -51,11 +51,10 @@ public final class DisplayController {
     /// 查不到物理连接(`nil`)时一律显示:宁可多显示一项(点了无效、实测不阻塞),
     /// 也不能让用户开不回一块还连着的屏。
     ///
-    /// ⚠️ 必须用 `liveExternalCount`(带 EDID 的传输节点),**不能用 `physicalExternalCount`**:
-    /// 后者数的是 framebuffer 的 `DisplayWidth`,而屏一被禁用这个键就消失,于是它**数不到
-    /// 被关掉的屏**——正是这里要找的那一类。实测(2026-09-18):两块外接屏、其中一块被关掉时,
-    /// `physicalExternalCount` 报 1、`liveExternalCount` 报 2,用前者算出「没有位置」,
-    /// 那块屏就被从菜单里藏了起来,用户再也点不开。
+    /// ⚠️ 判据必须是 `liveExternalCount`(带 EDID 的传输节点)。曾经有过一个 framebuffer 判据
+    /// (数 `DisplayWidth` 键),屏一被禁用该键就消失,于是它**数不到被关掉的屏**——
+    /// 正是这里要找的那一类。实测(2026-09-18)两块外接屏关掉其一时它报 1、EDID 判据报 2,
+    /// 用它算出「没有位置」,那块还连着的屏就被从菜单里藏了起来。那个判据已被删除。
     private func canShowDisabledExternals(active: [DisplayInfo]) -> Bool {
         guard let physical = service.liveExternalCount() else { return true }
         return physical - active.filter { !$0.isBuiltin }.count > 0
@@ -145,8 +144,7 @@ public final class DisplayController {
         // 没关过任何屏 → 屏黑与本 app 无关,不动手也不查系统。
         guard !disabled.isEmpty else { return false }
         // 查不到物理连接就什么都不做:无法证明任何一块屏已被拔走。
-        // 用 liveExternalCount 而非 physicalExternalCount:救援就发生在拔线通知到达那一刻,
-        // 而后者实测滞后约 3.5 秒才归零(见协议注释),那时拿到的还是拔线前的旧数字。
+        // 救援发生在拔线通知到达那一刻,判据必须当场准确(见协议注释)。
         guard let physical = service.liveExternalCount() else { return false }
         let disabledExternals = disabled.values.filter { !$0.isBuiltin }.count
         // 还有外接屏没被本 app 关掉 → 它亮着,不是全黑。

@@ -85,48 +85,12 @@ public final class CGDisplayService: SystemDisplayService {
         return Self.hasInternalBattery()
     }
 
-    /// 物理连接着的外接屏数量。取自 IOKit 的 framebuffer 节点:`external` + 已建立 `Transport`
-    /// + 带 `DisplayWidth`(链路那头确实挂着屏)。
-    ///
-    /// 实测依据(M 系列 · macOS 26):同一块外接屏,软件关掉后 IOKit 仍报 1 条连接、
-    /// 物理拔线后报 0 条;而 CoreGraphics 在这两种情况下的表现完全一致,无从区分。
-    public func physicalExternalCount() -> Int? {
-        var iter: io_iterator_t = 0
-        // 查询失败一律返回 nil(不是 0):0 会被对账当成「屏全拔了」而清空记录,
-        // 把用户还连着、只是被软件关掉的屏误删——查不到时宁可什么都不做。
-        guard IOServiceGetMatchingServices(kIOMainPortDefault,
-                                           IOServiceMatching("IOMobileFramebufferShim"),
-                                           &iter) == KERN_SUCCESS else { return nil }
-        defer { IOObjectRelease(iter) }
-        var count = 0
-        var svc = IOIteratorNext(iter)
-        while svc != 0 {
-            let props = Self.properties(of: svc)
-            // 三个条件缺一不可:
-            //   external     —— 是外接口,不是内建屏;
-            //   Transport    —— 这个口已经建立链路(空闲口没有这个键);
-            //   DisplayWidth —— 链路那头确实挂着一块屏(拔线后此键消失)。
-            //
-            // ⚠️ 不能按 IOMFBUUID 去重:实测它是显示协处理器实例的 UUID,
-            // **多块外接屏共享同一个值**,去重会把 N 块屏数成 1 块,
-            // 于是对账把用户线还连着的屏当成拔线残留删掉(v1.0.2 的回归就是这么来的)。
-            if (props["external"] as? Bool) ?? false,
-               props["Transport"] != nil,
-               props["DisplayWidth"] != nil {
-                count += 1
-            }
-            IOObjectRelease(svc)
-            svc = IOIteratorNext(iter)
-        }
-        return count
-    }
-
-    /// 见协议注释:拔线瞬间即刻准确的外接屏计数,专供全黑救援。
+    /// 见协议注释:本 app 唯一的物理连接真相(带 EDID 的传输节点)。
     /// 数 `IOPortTransportState`(基类,涵盖 DisplayPort / HDMI 等)下**带 EDID** 的节点——
     /// 每块实际连着的屏一个,拔线时内核当场销毁,与终止通知同步。
     public func liveExternalCount() -> Int? {
         var iter: io_iterator_t = 0
-        // 同 physicalExternalCount:查不到返回 nil 而不是 0,绝不让「查询失败」被当成「屏拔光了」。
+        // 查不到返回 nil 而不是 0:绝不让「查询失败」被当成「屏拔光了」。
         guard IOServiceGetMatchingServices(kIOMainPortDefault,
                                            IOServiceMatching("IOPortTransportState"),
                                            &iter) == KERN_SUCCESS else { return nil }
