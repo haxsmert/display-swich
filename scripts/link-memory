@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# 把本项目的「项目记忆」(仓库内单一源 .claude/memory/)软链回 ~/.claude,
+# 让 Claude Code 每会话的 recall 能读到。**换新机器 clone 本仓库后跑一次即可恢复**。
+#
+# 为什么需要它:Claude Code 的项目记忆存在 ~/.claude/projects/<按项目路径编码>/memory/,
+# 那是本机目录、不随 git clone 走。本仓库把记忆的单一真相源放进 .claude/memory/(git 跟踪),
+# 再用本脚本软链回 ~/.claude —— 单一源在仓库、随 clone 走、改一处即时生效。
+#
+# 跨机差异:用本机 $HOME + 仓库真实路径算 ~/.claude 下的目录名(路径里 / 换成 -),
+# 所以换用户名 / 换 clone 位置都对(只要本机 Claude Code 用同样的编码规则)。
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$REPO/.claude/memory"
+[ -d "$SRC" ] || { echo "[X] 找不到仓库记忆源:$SRC" >&2; exit 1; }
+
+ENC="$(printf '%s' "$REPO" | sed 's#/#-#g')"            # /Users/x/projects/contest-v2 -> -Users-x-projects-contest-v2
+DST="$HOME/.claude/projects/$ENC/memory"
+mkdir -p "$(dirname "$DST")"
+
+if [ -L "$DST" ]; then
+  rm "$DST"
+elif [ -e "$DST" ]; then
+  BAK="${DST}.bak-$(date +%Y%m%d%H%M%S)"
+  mv "$DST" "$BAK"
+  echo "[!] 原有实体记忆目录已备份到:$BAK(如有本机独有记忆,自行并回 .claude/memory/)"
+fi
+
+ln -s "$SRC" "$DST"
+echo "[✓] 项目记忆软链已恢复:"
+echo "    $DST"
+echo "    -> $SRC"
+echo "    recall 可读 $(ls -L "$DST"/*.md 2>/dev/null | grep -vc MEMORY) 条记忆 + MEMORY.md"

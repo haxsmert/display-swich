@@ -1,0 +1,3 @@
+- [设计文档的非目标是刻意决策](design-doc-non-goals-are-deliberate.md) — 代码里看似的缺口多半是有意为之,动手前读 §3 和 §7 全文
+- [真实动线:接坞办公、拔坞走人](displayswitch-real-usage-dock-workflow.md) — 拔插场景是日常而非边缘,按这条动线评估优先级和验收
+- [发 release 必须先真机验收](release-needs-real-machine-acceptance.md) — commit/tag 随时,release 是对外承诺,别当成完成的仪式

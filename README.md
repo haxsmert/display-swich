@@ -90,6 +90,15 @@ xattr -dr com.apple.quarantine /Applications/DisplaySwitch.app
 - **永不开机自启**(硬约束)→ 断开状态只存在于 WindowServer 内存、不落盘(实测),**重启**后即为「所有屏正常、app 未运行」的干净状态。
 - 全程 `.forAppOnly`,**绝不** `.permanently`。
 
+## 换机器后
+
+项目记忆的单一源在仓库里(`.claude/memory/`,随 git 走)。clone 之后跑一次:
+
+`bash scripts/link-memory`
+
+它把记忆软链回 `~/.claude/projects/<本项目>/memory/` —— 那是本机目录、**不随 clone 走**,
+所以不跑这一步,记忆就读不到。另外系统大版本升级后建议跑 `bash scripts/selfcheck.sh`(见上)。
+
 ## 说明
 
 - 用到 macOS 私有符号 `CGSConfigureDisplayEnabled`(经 `dlsym` 动态解析,无链接期硬依赖),因此**无法上架 App Store**,仅本地/自分发。
