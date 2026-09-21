@@ -779,8 +779,8 @@ func revivalSkippedWhenSymbolMissing() {
 
 @Test("同型号两块屏:关掉其一后编号不漂移——这正是记账要留着的理由")
 func numberingStaysStableViaBookkeeping() {
-    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "Mi Monitor"),
-                                makeInfo(id: 5, x: 1920, name: "Mi Monitor")])
+    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "External Display"),
+                                makeInfo(id: 5, x: 1920, name: "External Display")])
     let ctrl = DisplayController(service: svc)
     let before = ctrl.menuItems()
     let label4 = before.first { $0.id == 4 }?.label

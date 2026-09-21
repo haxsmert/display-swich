@@ -17,7 +17,7 @@
 
 ## 系统要求
 
-- **Apple Silicon(M 系列)** + **macOS 13+**(开发/验证于 M5 Pro;**当前 macOS 27.0**,此前为 macOS 26.x)。
+- **Apple Silicon(M 系列)** + **macOS 13+**(**当前验证于 macOS 27.0**,此前为 macOS 26.x)。
 - 用到私有符号与 IOKit 内部结构,**系统大版本升级后请跑一次** `bash scripts/selfcheck.sh` 确认依赖完好。
 - 非 Apple Silicon 或私有接口缺失时,app 自动**只读不可切换**并在菜单顶部提示——绝不在未验证平台上动显示器。
 

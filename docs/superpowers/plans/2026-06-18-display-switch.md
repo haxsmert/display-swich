@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **平台**:Apple Silicon + macOS 13+(开发机 M5 Pro / macOS 26.5.1)。不支持 Intel。
+- **平台**:Apple Silicon + macOS 13+(开发机 Apple Silicon / macOS 26.5.1)。不支持 Intel。
 - **零第三方依赖**,只用系统框架。
 - **私有符号** `CGSConfigureDisplayEnabled` 一律通过 `dlsym(RTLD_DEFAULT, ...)`(`RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)`)解析后 `unsafeBitCast` 调用,**不硬链接**。
 - **绝不使用** `CGConfigureOption.permanently`(断开后可能无法用代码恢复的死坑)。配置选项首选 `.forAppOnly`,fallback `.forSession`。
@@ -136,7 +136,7 @@ import CoreGraphics
 @testable import DisplaySwitchCore
 
 func makeInfo(id: CGDirectDisplayID, builtin: Bool = false, main: Bool = false,
-              active: Bool = true, x: CGFloat = 0, name: String = "Mi Monitor") -> DisplayInfo {
+              active: Bool = true, x: CGFloat = 0, name: String = "External Display") -> DisplayInfo {
     DisplayInfo(id: id, uuid: "uuid-\(id)", name: name,
                 bounds: CGRect(x: x, y: 0, width: 1920, height: 1080),
                 isMain: main, isBuiltin: builtin, isActive: active)
@@ -238,7 +238,7 @@ git commit -m "🧱 定义 DisplayInfo 值类型与外接屏筛选"
 **Interfaces:**
 - Consumes: `DisplayInfo`(Task 2)
 - Produces: `func displayLabel(for display: DisplayInfo, among externals: [DisplayInfo]) -> String`
-  - 规则:基名取 `display.name`(空则 `"显示器"`);把 `externals` 按 `bounds.minX` 升序排;若恰 2 块,最左→`左`、最右→`右`;若 >2 块→`#序号`(从 1 起);若 1 块→无位置标签;主屏追加 `主屏`;标签用 `·` 连接放进全角括号。例:`Mi Monitor（左·主屏）` / `Mi Monitor（右）` / `Mi Monitor（主屏）` / `Mi Monitor`。
+  - 规则:基名取 `display.name`(空则 `"显示器"`);把 `externals` 按 `bounds.minX` 升序排;若恰 2 块,最左→`左`、最右→`右`;若 >2 块→`#序号`(从 1 起);若 1 块→无位置标签;主屏追加 `主屏`;标签用 `·` 连接放进全角括号。例:`External Display（左·主屏）` / `External Display（右）` / `External Display（主屏）` / `External Display`。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -253,20 +253,20 @@ func labelsLeftRightWithMain() {
     let left = makeInfo(id: 2, main: true, x: 0)
     let right = makeInfo(id: 3, x: 1920)
     let externals = [left, right]
-    #expect(displayLabel(for: left, among: externals) == "Mi Monitor（左·主屏）")
-    #expect(displayLabel(for: right, among: externals) == "Mi Monitor（右）")
+    #expect(displayLabel(for: left, among: externals) == "External Display（左·主屏）")
+    #expect(displayLabel(for: right, among: externals) == "External Display（右）")
 }
 
 @Test("单块外接屏无位置标签")
 func labelSingleExternalNoPosition() {
     let only = makeInfo(id: 2, x: 0)
-    #expect(displayLabel(for: only, among: [only]) == "Mi Monitor")
+    #expect(displayLabel(for: only, among: [only]) == "External Display")
 }
 
 @Test("单块外接屏是主屏时只标主屏")
 func labelSingleMainOnly() {
     let only = makeInfo(id: 2, main: true, x: 0)
-    #expect(displayLabel(for: only, among: [only]) == "Mi Monitor（主屏）")
+    #expect(displayLabel(for: only, among: [only]) == "External Display（主屏）")
 }
 
 @Test("三块及以上用序号")
@@ -275,7 +275,7 @@ func labelThreeUsesIndex() {
     let b = makeInfo(id: 3, x: 1920)
     let c = makeInfo(id: 4, x: 3840)
     let externals = [a, b, c]
-    #expect(displayLabel(for: b, among: externals) == "Mi Monitor（#2）")
+    #expect(displayLabel(for: b, among: externals) == "External Display（#2）")
 }
 
 @Test("名字为空时回退为显示器")
@@ -797,7 +797,7 @@ print("恢复后活跃=\(activeCount())")
 
 Run(需用户在场、保存好副屏工作后执行):
 ```bash
-swift /Users/bianzhiwen/projects/display-swich/spike/service_check.swift
+swift <repo>/spike/service_check.swift
 ```
 Expected:打印 `✅ forAppOnly 全局生效` 且恢复后活跃屏回到原数量。
 
@@ -969,7 +969,7 @@ Expected:构建成功。
 - [ ] **Step 4: 手动 smoke —— 直接运行**
 
 Run: `swift run DisplaySwitchApp`
-Expected:菜单栏出现 `display.2` 图标;点开能看到两块小米屏(带左/右·主屏标签);点副屏那行能断开(副屏变黑、窗口迁移)、再点能恢复;退出时被关的屏自动恢复。验证后 `Ctrl-C` 或点「退出」结束。
+Expected:菜单栏出现 `display.2` 图标;点开能看到两块外接屏(带左/右·主屏标签);点副屏那行能断开(副屏变黑、窗口迁移)、再点能恢复;退出时被关的屏自动恢复。验证后 `Ctrl-C` 或点「退出」结束。
 
 - [ ] **Step 5: Commit**
 
@@ -1031,14 +1031,14 @@ echo "已生成 $APP"
 
 Run:
 ```bash
-chmod +x /Users/bianzhiwen/projects/display-swich/scripts/package.sh
-/Users/bianzhiwen/projects/display-swich/scripts/package.sh
+chmod +x <repo>/scripts/package.sh
+<repo>/scripts/package.sh
 ```
 Expected:打印 `已生成 .../build/DisplaySwitch.app`,无报错。
 
 - [ ] **Step 3: 手动 smoke —— 打开 .app**
 
-Run: `open /Users/bianzhiwen/projects/display-swich/build/DisplaySwitch.app`
+Run: `open <repo>/build/DisplaySwitch.app`
 Expected:菜单栏出现图标(Dock 无图标);功能与 Task 8 一致。
 
 - [ ] **Step 4: Commit**
