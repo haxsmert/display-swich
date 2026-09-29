@@ -87,7 +87,8 @@ public final class CGDisplayService: SystemDisplayService {
 
     /// 见协议注释:本 app 唯一的物理连接真相(带 EDID 的传输节点)。
     /// 数 `IOPortTransportState`(基类,涵盖 DisplayPort / HDMI 等)下**带 EDID** 的节点——
-    /// 每块实际连着的屏一个,拔线时内核当场销毁,与终止通知同步。
+    /// 每块实际连着的屏一个。拔线时:经拓展坞的屏,节点被内核当场销毁,与终止通知同步;
+    /// 机身 HDMI 口的节点常驻,拔线只去掉它的 EDID(2026-09-29 实测),计数照样归零,但不产生终止通知。
     public func liveExternalCount() -> Int? {
         var iter: io_iterator_t = 0
         // 查不到返回 nil 而不是 0:绝不让「查询失败」被当成「屏拔光了」。
@@ -118,8 +119,9 @@ public final class CGDisplayService: SystemDisplayService {
     private var terminationIterator: io_iterator_t = 0
     private var disconnectHandler: (() -> Void)?
 
-    /// 挂到 `IOPortTransportState`(基类,一并覆盖 DisplayPort 与 HDMI 等传输类型)的终止通知上。
-    /// 拔线时该类下「每块实际连着的屏一个」的节点会被内核销毁,通知随即到达——零轮询。
+    /// 挂到 `IOPortTransportState`(基类)的终止通知上。
+    /// ⚠️ 不覆盖机身 HDMI 口:它的传输节点常驻,拔线只去掉 EDID、不销毁节点,终止通知不会发(2026-09-29 实测)。
+    /// 经拓展坞时,拔线会让该类下「每块实际连着的屏一个」的节点被内核销毁,通知随即到达——零轮询。
     /// 实测:未接屏时该类下带 EDID 的节点为 0 个,接两块外接屏后为 2 个,各带该屏的 EDID。
     public func observeDisplayDisconnect(_ handler: @escaping () -> Void) {
         disconnectHandler = handler
