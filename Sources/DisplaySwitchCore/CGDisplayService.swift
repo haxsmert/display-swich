@@ -117,12 +117,18 @@ public final class CGDisplayService: SystemDisplayService {
 
     private var notificationPort: IONotificationPortRef?
     private var terminationIterator: io_iterator_t = 0
+    private var reregistrationIterator: io_iterator_t = 0
     private var disconnectHandler: (() -> Void)?
 
-    /// 挂到 `IOPortTransportState`(基类)的终止通知上。
-    /// ⚠️ 不覆盖机身 HDMI 口:它的传输节点常驻,拔线只去掉 EDID、不销毁节点,终止通知不会发(2026-09-29 实测)。
-    /// 经拓展坞时,拔线会让该类下「每块实际连着的屏一个」的节点被内核销毁,通知随即到达——零轮询。
-    /// 实测:未接屏时该类下带 EDID 的节点为 0 个,接两块外接屏后为 2 个,各带该屏的 EDID。
+    /// 在 `IOPortTransportState`(基类)上挂**两种**内核通知,零轮询,共用同一个回调:
+    ///   ① **终止**:经拓展坞(USB-C / 雷雳)接的屏,拔线时它的传输节点被内核销毁,通知随即到达。
+    ///      实测:未接屏时该类下带 EDID 的节点为 0 个,接两块外接屏后为 2 个,各带该屏的 EDID。
+    ///   ② **重新登记**(`kIOMatchedNotification`):机身 HDMI 口的节点**常驻**,拔线不销毁它,
+    ///      ① 永远不会发;驱动只是把它改为未激活、去掉 EDID,然后重新登记这个节点,于是匹配通知再来一次。
+    ///      实测(2026-09-29,两轮拔 HDMI):每轮拔出各来一次,排在这一串事件的最后,
+    ///      到达时 EDID 已去掉、计数已归零——判据当场就准。
+    /// ② 在插线、以及其他端口(充电、SD 卡等)状态变化时也会来;回调只负责「叫醒」,
+    /// 判断交给救援判据,无需救援时完全静默,所以多来几次无害。
     public func observeDisplayDisconnect(_ handler: @escaping () -> Void) {
         disconnectHandler = handler
         guard let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
@@ -138,14 +144,20 @@ public final class CGDisplayService: SystemDisplayService {
             guard found, let context else { return }
             Unmanaged<CGDisplayService>.fromOpaque(context).takeUnretainedValue().disconnectHandler?()
         }
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        // 每次注册都要一份新的匹配字典:IOServiceAddMatchingNotification 会消耗掉它。
         IOServiceAddMatchingNotification(port, kIOTerminatedNotification,
                                          IOServiceMatching("IOPortTransportState"),
-                                         callback,
-                                         Unmanaged.passUnretained(self).toOpaque(),
-                                         &terminationIterator)
+                                         callback, context, &terminationIterator)
+        IOServiceAddMatchingNotification(port, kIOMatchedNotification,
+                                         IOServiceMatching("IOPortTransportState"),
+                                         callback, context, &reregistrationIterator)
         // 注册后先排空一次:这是 IOKit 要求的「武装」动作,不做则一条通知都收不到。
-        var svc = IOIteratorNext(terminationIterator)
-        while svc != 0 { IOObjectRelease(svc); svc = IOIteratorNext(terminationIterator) }
+        // 匹配通知的迭代器此刻装着所有现存节点,排空时**不**调回调——那不是任何变化。
+        for iterator in [terminationIterator, reregistrationIterator] {
+            var svc = IOIteratorNext(iterator)
+            while svc != 0 { IOObjectRelease(svc); svc = IOIteratorNext(iterator) }
+        }
     }
 
     // MARK: - 盖子:开盖是内建屏重新可用的唯一时刻

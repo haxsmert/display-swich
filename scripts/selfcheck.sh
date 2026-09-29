@@ -9,7 +9,8 @@
 # 否则验的就不是真实路径了。而且它不只查「符号在不在」,更查「行为对不对」:
 # 2026-09-18 的事故正是「符号还在、行为变了」(一个判据从能看到被禁用的屏,变成看不到)。
 #
-# 用法:bash scripts/selfcheck.sh
+# 用法:bash scripts/selfcheck.sh          (升级后必跑)
+#       bash scripts/selfcheck.sh --plug   (再加一项动手检查:按提示拔掉一块外接屏)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
@@ -19,6 +20,8 @@ cat "$ROOT"/Sources/DisplaySwitchCore/*.swift > "$TMP/check.swift"
 cat >> "$TMP/check.swift" <<'EOF'
 
 import Foundation
+// 输出重定向到文件时也要逐行落地:动手检查的提示必须即时可见。
+setvbuf(stdout, nil, _IOLBF, 0)
 var fail = 0
 func check(_ name: String, _ ok: Bool, _ detail: String = "") {
     print("  \(ok ? "✅" : "❌") \(name)\(detail.isEmpty ? "" : "  → \(detail)")")
@@ -64,6 +67,23 @@ check("菜单能渲染", !items.isEmpty, "\(items.count) 项")
 for i in items { print("       \(i.isOn ? "✓" : " ") \(i.label)") }
 check("无关闭记录时不误救援", ctrl.needsBlackoutRescue() == false)
 
+// 可选的动手检查(bash scripts/selfcheck.sh --plug):拔线通知依赖系统驱动的内部行为——
+// 拓展坞靠「节点被销毁」,机身 HDMI 靠「节点被重新登记」(2026-09-29 实测)。
+// 这类行为升级后可能悄悄变掉,又只能靠真的拔一次线来验,所以做成可选项,升级后跑一次。
+if CommandLine.arguments.contains("--plug") {
+    let before = svc.liveExternalCount() ?? -1
+    print("\n【拔线通知】需要动手:当前外接屏 \(before) 块,请在 60 秒内拔掉其中一块(HDMI 或拓展坞均可)……")
+    var atNotice: Int?
+    svc.observeDisplayDisconnect {
+        // 通知也会因插线、充电等别的变化而来;只认「到达这一刻计数已经减少」的那一次。
+        if atNotice == nil, let now = svc.liveExternalCount(), now < before { atNotice = now }
+    }
+    let deadline = Date().addingTimeInterval(60)
+    while atNotice == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+    check("拔线通知到达,且到达时计数已减少", before > 0 && atNotice != nil,
+          "拔线前=\(before) 通知时=\(atNotice.map(String.init) ?? "60 秒内没等到")")
+}
+
 print("\n【AppKit 通知名】")
 check("didWakeNotification", !NSWorkspace.didWakeNotification.rawValue.isEmpty)
 check("screensDidWakeNotification", !NSWorkspace.screensDidWakeNotification.rawValue.isEmpty)
@@ -71,4 +91,4 @@ check("screensDidWakeNotification", !NSWorkspace.screensDidWakeNotification.rawV
 print("\n" + (fail == 0 ? "✅ 全部通过" : "❌ \(fail) 项失败 —— 升级破坏了依赖,先修再用"))
 exit(fail == 0 ? 0 : 1)
 EOF
-swift "$TMP/check.swift"
+swift "$TMP/check.swift" "$@"
