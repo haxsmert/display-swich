@@ -2,4 +2,4 @@
 - [真实动线:接坞办公、拔坞走人](displayswitch-real-usage-dock-workflow.md) — 拔插场景是日常而非边缘,按这条动线评估优先级和验收
 - [发 release 必须先真机验收](release-needs-real-machine-acceptance.md) — commit/tag 随时,release 是对外承诺,别当成完成的仪式
 - [两次内核崩溃是雷雳显示驱动卡死](panic-thunderbolt-dp-wedge-not-displayswitch.md) — 9/29 已排除本 app、9/22 未能完全排除;再遇崩溃先按其中特征与核查法判定
-- [显示器睡眠中救援会忙等](rescue-during-display-sleep-spins.md) — 硬试会在主线程卡约 10 秒并失败;v1.0.15 改为等唤醒,完整动线待验收
+- [显示器睡眠中救援会忙等](rescue-during-display-sleep-spins.md) — 硬试会在主线程卡约 10 秒并失败;v1.0.15 改为等唤醒,已真机验收并发版
