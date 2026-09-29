@@ -52,6 +52,16 @@ final class MockService: SystemDisplayService {
     /// 模拟合盖(只改状态,不派发事件——合上盖子不是「内建屏可能可用」的时刻)。
     func closeLid() { clamshellClosed = true }
 
+    /// 屏幕(显示系统)是否在睡眠。`nil` 模拟判断不了。
+    var displaysAsleep: Bool? = false
+    func isDisplaySystemAsleep() -> Bool? { displaysAsleep }
+    /// 模拟屏幕唤醒:先变为醒着,再派发事件(真机上走 NSWorkspace 的屏幕唤醒通知,
+    /// 它与开盖共用同一个触发源)。先变状态、后派发,是真机实测过的时序。
+    func wakeDisplays() {
+        displaysAsleep = false
+        builtInAvailableHandler?()
+    }
+
     /// 模拟真机枚举里混着的**空槽位**(没接屏的接口):它们会出现在列表里,但点亮必失败。
     var emptySlots: [CGDirectDisplayID] = []
     /// 模拟私有符号 CGSGetDisplayList 不可用。
@@ -114,6 +124,7 @@ final class MockService: SystemDisplayService {
     /// 但线都还插着,IOKit 物理连接不变。用来锁住「息屏绝不能被当成全黑」。
     func sleepAllDisplays() {
         activeIDs.removeAll()
+        displaysAsleep = true
     }
 
     /// 模拟「CoreGraphics 读数陈旧」:线已经拔了(IOKit 侧都归零),
@@ -464,6 +475,7 @@ func sleepingDisplaysAreNotBlackout() {
 
     // 旧判据(activeDisplays().isEmpty)在这里会误救援;新判据看 IOKit,外接屏还连着 → 不动手。
     #expect(ctrl.rescueFromBlackout() == false)
+    #expect(ctrl.rescueDeferral() == nil)        // 没有全黑就无所谓「等」:睡眠本身不是推迟的理由
     #expect(svc.setCalls.count == before)
     #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)   // 用户的关闭意图保留
 }
@@ -589,6 +601,7 @@ func diagnosticsReportsFactsWithoutSideEffects() {
     #expect(text.contains("本app已关屏=1"))
     #expect(text.contains("内建 1"))
     #expect(text.contains("瞬时外接屏=1"))
+    #expect(text.contains("屏幕睡眠=false"))
     #expect(svc.setCalls.count == before)          // 纯读,一次系统调用都不发
     #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)   // 状态不被改动
 }
@@ -631,6 +644,7 @@ func rescueDeferredWhileLidClosed() {
     let base = svc.setCalls.count
 
     #expect(ctrl.needsBlackoutRescue() == true)  // 确实全黑
+    #expect(ctrl.rescueDeferral() == .lidClosed) // 原因如实:等开盖
     #expect(ctrl.rescueFromBlackout() == false)  // 但此刻不动手
     #expect(svc.setCalls.count == base)          // 一次系统调用都没发(否则要白等 20 秒)
     #expect(ctrl.needsBlackoutRescue() == true)  // 记录留着,开盖时还会救
@@ -703,6 +717,97 @@ func lidOpenWithoutBlackoutIsSilent() {
     #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)
 }
 
+
+// MARK: - 屏幕睡眠(2026-09-22 事故:睡眠中拔坞,两次点亮调用各空等约 10 秒后失败)
+//
+// 屏幕睡眠时 WindowServer 把拔出事件推迟到唤醒再处理,此刻下的配置调用在调用线程上
+// 忙等「上一次重配置完成」约 10 秒后失败,一分钟刷出约 62 万行日志;屏幕醒着时同样的调用
+// 0.1 秒内完成(9/22、9/23、9/24 三次实测)。所以睡眠中不下指令,交给唤醒那一刻。
+
+@Test("全黑但屏幕在睡眠:不下指令(下了只会空等约 10 秒再失败),记录留着等唤醒")
+func rescueDeferredWhileDisplaysAsleep() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                      // 关内建屏,外接屏办公
+    svc.sleepAllDisplays()                      // 人走开,屏幕睡着
+    svc.unplug(4)                               // 睡眠中拔坞 → 全黑
+    let base = svc.setCalls.count
+
+    #expect(ctrl.needsBlackoutRescue() == true)          // 确实全黑
+    #expect(ctrl.rescueDeferral() == .displaysAsleep)    // 原因如实:等唤醒
+    #expect(ctrl.rescueFromBlackout() == false)          // 此刻不动手
+    #expect(svc.setCalls.count == base)                  // 一次系统调用都没发
+    #expect(ctrl.needsBlackoutRescue() == true)          // 记录留着,唤醒时还会救
+}
+
+@Test("复现 2026-09-22:屏幕睡眠中拔坞 → 唤醒时内建屏必须自动亮回来")
+func displayWakeAfterBlackoutRescuesBuiltIn() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    // 按 AppDelegate 的方式装配两个触发源。
+    svc.observeDisplayDisconnect { _ = ctrl.rescueFromBlackout() }
+    svc.observeBuiltInMayBecomeAvailable { _ = ctrl.rescueFromBlackout() }
+
+    _ = ctrl.toggle(id: 1)                      // 关内建屏,两块外接屏办公
+    svc.sleepAllDisplays()                      // 人走开,屏幕睡着
+    svc.unplug(4); svc.unplug(5)                // 睡眠中拔坞
+    svc.fireDisconnectNotification()
+    #expect(!svc.setCalls.contains { $0.on })  // 拔线那一刻一次都没试
+    #expect(svc.activeDisplays().isEmpty)
+
+    svc.wakeDisplays()                          // 按键 / 开盖唤醒屏幕
+    #expect(!svc.activeDisplays().isEmpty)      // 内建屏亮回来
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == true)
+}
+
+@Test("屏幕睡眠状态查不到:按醒着处理照样救,不能因查询失败而不救")
+func rescueProceedsWhenDisplaySleepUnknown() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    svc.unplug(4)
+    svc.displaysAsleep = nil
+
+    #expect(ctrl.rescueDeferral() == nil)
+    #expect(ctrl.rescueFromBlackout() == true)
+    #expect(svc.setCalls.contains { $0.id == 1 && $0.on == true })
+}
+
+@Test("屏幕睡眠挡住的是所有配置调用:被关掉、线还连着的外接屏同样等唤醒")
+func displaySleepDefersExternalRestoreToo() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)                      // 关内建
+    _ = ctrl.toggle(id: 4)                      // 关外接 4
+    svc.sleepAllDisplays()
+    svc.unplug(5)                               // 睡眠中拔走 5;4 还连着但被关了 → 全黑
+    let base = svc.setCalls.count
+
+    // 与合盖不同:合盖只挡内建屏,睡眠挡住任何一块屏的点亮。
+    #expect(ctrl.rescueDeferral() == .displaysAsleep)
+    #expect(ctrl.rescueFromBlackout() == false)
+    #expect(svc.setCalls.count == base)
+}
+
+@Test("合盖又睡眠、只剩内建屏能救:原因报「等开盖」——开盖才是它能亮的时刻")
+func lidClosedTakesPrecedenceOverDisplaySleep() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    svc.closeLid()
+    svc.sleepAllDisplays()
+    svc.unplug(4)
+
+    #expect(ctrl.rescueDeferral() == .lidClosed)
+    #expect(ctrl.rescueFromBlackout() == false)
+}
 
 @Test("外接屏拔走后又插回来:菜单里必须还能看到它,否则彻底失联")
 func repluggedDisabledDisplayStaysReachable() {

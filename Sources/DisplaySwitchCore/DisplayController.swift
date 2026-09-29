@@ -8,6 +8,12 @@ public struct DisplayMenuItem: Equatable, Sendable {
     public let canToggleOff: Bool
 }
 
+/// 需要救援、但此刻下指令注定失败时,在等什么。
+public enum RescueDeferral: Equatable, Sendable {
+    case lidClosed
+    case displaysAsleep
+}
+
 /// 组合纯逻辑(命名/保护)与系统服务,维护「被本 app 关闭的屏」状态。
 public final class DisplayController {
     private let service: SystemDisplayService
@@ -155,12 +161,38 @@ public final class DisplayController {
         return true
     }
 
+    /// 需要救援、但此刻下指令注定失败时,在等什么;`nil` = 可以动手,或根本不需要救。纯读。
+    ///
+    /// 两种「等」性质不同,调用方要如实记录是哪一种:
+    ///   - `.lidClosed`:只剩内建屏能救,而盖子合着——它物理上不可用,点亮会阻塞约 20 秒后失败
+    ///     (2026-09-18 实测)。等开盖,那才是它重新可用的时刻。
+    ///   - `.displaysAsleep`:屏幕在睡眠——WindowServer 把拔出事件推迟到唤醒再处理,
+    ///     此刻的配置调用会在调用线程上忙等「上一次重配置完成」约 10 秒后失败
+    ///     (2026-09-22 实测:两次各卡约 10 秒,一分钟刷出约 62 万行日志;屏幕醒着时同样的调用
+    ///     9/22、9/23、9/24 三次都在 0.1 秒内完成)。它挡的是**任何一块屏**的点亮,等唤醒。
+    /// 两者同时成立且只剩内建屏能救时报 `.lidClosed`:唤醒不等于开盖,开盖才是它能亮的时刻。
+    ///
+    /// 两种情况下记录都原样留着,`needsBlackoutRescue()` 依然成立,
+    /// 「开盖 / 唤醒」触发源到来时救援会重新进行。
+    public func rescueDeferral() -> RescueDeferral? {
+        guard needsBlackoutRescue() else { return nil }
+        return deferralReason()
+    }
+
+    /// `rescueDeferral` 的判定本身,前提是已确认需要救援。
+    private func deferralReason() -> RescueDeferral? {
+        if service.liveExternalCount() == 0, service.isClamshellClosed() == true { return .lidClosed }
+        if service.isDisplaySystemAsleep() == true { return .displaysAsleep }
+        return nil
+    }
+
     /// 执行救援。返回**是否真的对系统下了恢复指令**——
-    /// `false` 有两种含义:不需要救(见 `needsBlackoutRescue`),或需要救但此刻注定失败(合盖)。
-    /// 调用方要区分二者,先问 `needsBlackoutRescue()`。
+    /// `false` 有两种含义:不需要救(见 `needsBlackoutRescue`),或需要救但此刻注定失败
+    /// (见 `rescueDeferral`)。调用方要区分二者,先问这两个。
     @discardableResult
     public func rescueFromBlackout() -> Bool {
         guard needsBlackoutRescue() else { return false }
+        guard deferralReason() == nil else { return false }
 
         // 外接屏一块都不在了 → 这一轮只可能靠内建屏解除全黑,跳过那些屏的恢复调用。
         //
@@ -171,14 +203,6 @@ public final class DisplayController {
         // 只能靠私有接口 CGSGetDisplayList 枚举出被禁用的屏才捞回来。
         // 记录留着,插回来时菜单仍列得出它,用户点一下就能开。
         let onlyBuiltInCanHelp = (service.liveExternalCount() == 0)
-
-        // 只剩内建屏能救,而盖子合着:它物理上不可用,现在点亮注定失败(实测阻塞约 20 秒)。
-        // 不做这种尝试,等开盖——那才是它重新可用的时刻。
-        // 记录原样留着,开盖时 needsBlackoutRescue() 依然成立,救援会重新触发。
-        if onlyBuiltInCanHelp, service.isClamshellClosed() == true {
-            return false
-        }
-
         restoreAll(where: onlyBuiltInCanHelp ? { $0.isBuiltin } : { _ in true })
         return true
     }
@@ -190,8 +214,9 @@ public final class DisplayController {
         let all = disabled.values
         let ext = all.filter { !$0.isBuiltin }.count
         let live = service.liveExternalCount().map(String.init) ?? "查询失败"
+        let asleep = service.isDisplaySystemAsleep().map(String.init) ?? "查询失败"
         return "本app已关屏=\(all.count)(内建 \(all.count - ext) / 外接 \(ext))"
-             + " | 瞬时外接屏=\(live) | 有内建面板=\(service.hasBuiltInDisplay())"
+             + " | 瞬时外接屏=\(live) | 有内建面板=\(service.hasBuiltInDisplay()) | 屏幕睡眠=\(asleep)"
     }
 
     /// 启动兜底:把系统里「上一次进程遗留的、还关着的屏」全部点亮。返回真正点亮的块数。

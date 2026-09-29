@@ -51,6 +51,10 @@ check("EDID 键仍能数出外接屏", live >= 0, "带 EDID 的节点=\(live)")
 check("isSupported", svc.isSupported)
 let activeExt = svc.activeDisplays().filter { !$0.isBuiltin }.count
 check("物理外接屏数 ≥ 活跃外接屏数", live >= activeExt, "物理=\(live) 活跃外接=\(activeExt)")
+// 跑自检时人就在屏幕前,屏幕必然醒着。误判成睡眠是危险方向:拔线瞬间的救援会被推迟到
+// 一次不会来的唤醒。睡眠时判为「睡」、唤醒通知那一刻已判为「醒」,2026-09-29 已在真机实测。
+let asleep = svc.isDisplaySystemAsleep()
+check("屏幕醒着时不判为睡眠", asleep != true, "判定=\(asleep.map { $0 ? "睡" : "醒" } ?? "查不到")")
 let inactive = svc.inactiveDisplayIDs()
 check("CGSGetDisplayList 能枚举被禁用的屏", inactive != nil, "未点亮 ID=\(inactive.map(String.init(describing:)) ?? "nil")")
 

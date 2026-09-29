@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 往往已经合上,内建屏物理不可用、救援注定失败;而开盖时不会再有任何拔线事件,
         // 救援就永远没有第二次机会。2026-09-18 事故正是如此——重试用尽后到新地点开盖,
         // 屏仍是黑的,只能强制重启。
+        // 屏幕睡眠中拔坞同理:拔线那一刻系统不处理显示配置,救援等到屏幕唤醒这一刻才做(2026-09-22)。
         service.observeBuiltInMayBecomeAvailable { [weak self] in
             self?.attemptRescue(trigger: "开盖 / 唤醒")
         }
@@ -65,10 +66,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard controller.needsBlackoutRescue() else { return }
         RescueLog.write("\(trigger) | \(controller.blackoutDiagnostics())")
 
-        guard controller.rescueFromBlackout() else {
+        // 此刻下指令注定失败:只记一笔,交给「开盖 / 唤醒」触发源。
+        switch controller.rescueDeferral() {
+        case .lidClosed:
             RescueLog.write("  → 全黑,但盖子合着:内建屏此刻物理不可用,不做注定失败的尝试,等开盖")
             return
+        case .displaysAsleep:
+            // 不能硬试:这一下会在主线程上空等约 10 秒、刷出几十万行系统日志,最后仍失败(2026-09-22)。
+            RescueLog.write("  → 全黑,但屏幕在睡眠:系统此刻不处理显示配置,不做注定失败的尝试,等唤醒")
+            return
+        case nil:
+            break
         }
+        // 两次查询之间状态若已变化(如刚好不再需要救),这里就什么都没下,不记「已下指令」。
+        guard controller.rescueFromBlackout() else { return }
         RescueLog.write("  → 已下恢复指令(剩余重试 \(attemptsLeft) 次),当前活跃屏 \(service.activeDisplays().count) 块")
         guard attemptsLeft > 0 else {
             RescueLog.write("  ⚠️ 重试用尽;若仍黑着,开盖 / 唤醒会重新触发一轮")

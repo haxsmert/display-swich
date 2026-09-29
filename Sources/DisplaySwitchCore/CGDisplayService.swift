@@ -164,6 +164,19 @@ public final class CGDisplayService: SystemDisplayService {
         return value
     }
 
+    /// 见协议注释。问 WindowServer 自己:在线的屏**全部**报睡眠才算睡眠,列表为空则判断不了。
+    ///
+    /// 为什么是「全部」:两种误判代价不对称。误判成睡眠,会把拔线那一刻的救援推迟到
+    /// 一次可能永远不来的唤醒;误判成醒着,只是退回旧行为(空等约 10 秒后失败)。
+    /// 为什么看在线列表:被本 app 关掉的屏不在其中,在列表里的正是此刻由 WindowServer 驱动的屏。
+    public func isDisplaySystemAsleep() -> Bool? {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return nil }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &ids, &count) == .success, count > 0 else { return nil }
+        return ids.prefix(Int(count)).allSatisfy { CGDisplayIsAsleep($0) != 0 }
+    }
+
     /// 见协议注释。**两条路都挂上**,因为开盖会走哪一条取决于系统当时睡没睡:
     ///   ① `NSWorkspace` 的唤醒通知——合盖导致睡眠(实测本机 `AppleClamshellCausesSleep = Yes`)后,
     ///      开盖是「唤醒」,走这条;
