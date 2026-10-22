@@ -34,3 +34,12 @@ metadata:
 **这项自检(以及真机单测 physicalCountCoversActiveExternals)兼作卡死探测器**:它报红时先别插回坞,先重启。
 **卡死时本 app 的一个实际用途(他本人 10-22 的做法)**:拔坞后两块屏成了「残影」(系统仍当它们在线,
 窗口困在上面拖不回来),他用 DisplaySwitch 把这两块关掉,窗口才回到内建屏。改断开 / 救援逻辑时别破坏这条路。
+**卡死的确切位置(2026-10-22 重启时的 shutdown_stall 报告,带符号的内核栈,`spindump -i <报告> -o <txt>` 可读)**:
+① 线程 `0x9a60a`(就是日志里刷 `evaluating for > 1m` 的那个)卡在
+`AppleThunderboltDPConnectionManager::evaluateConnections → DPOutAdapterCM::doSynchronousEvaluation → sleepGate`;
+② 它在等线程 `0x9a60e`:`processBandwidthAllocationRequest → IOThunderboltController::configPollDWordWithMask`
+——**同步轮询拓展坞那路 DP 适配器的寄存器,等一个永远不翻转的状态位**(9/29 日志里的 `polling DPTX Req ... 0xe00002d6`);
+③ 拔坞的拆除线程 `IOThunderboltConnectionManager::rescan → terminateInvalidClientsOnPort → DPOutAdapter::requestTerminate`
+也卡在同一把门上 → 拆不掉旧坞(残影屏)、也不处理新插入(插回不亮、坞上鼠标失灵)。
+即:拓展坞那路(三次都是 `DPO [0:0x1:0x13]`)不回应带宽分配请求,macOS 27.0 的驱动没有超时放弃,把整个雷雳配置线程拖住。
+重启时本 app 并未运行(不在关机报告的进程里)。
