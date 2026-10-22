@@ -1,5 +1,21 @@
 import CoreGraphics
 
+/// 拔线通知是哪一种内核事件触发的。只用于诊断日志——救援判据不看它。
+public enum DisplayDisconnectSignal: Equatable, Sendable {
+    /// 传输节点被销毁:经拓展坞(USB-C / 雷雳)接的屏拔线时。
+    case nodeTerminated
+    /// 传输节点被重新登记:机身 HDMI 口拔线时;插线、其他端口变化时也会来。
+    case nodeReregistered
+
+    /// 写进救援日志的说法。
+    public var logText: String {
+        switch self {
+        case .nodeTerminated: return "节点销毁"
+        case .nodeReregistered: return "节点重新登记"
+        }
+    }
+}
+
 /// 把所有与系统显示子系统的副作用交互藏在协议后,便于注入测试。
 public protocol SystemDisplayService {
     /// 私有断开符号是否可用;不可用时(如未来 macOS 改名/移除)应禁用开关并提示,而非静默失败。
@@ -31,6 +47,11 @@ public protocol SystemDisplayService {
     /// 偏小意味着「更容易认为屏还在、更容易显示出来」,是安全方向。
     func liveExternalCount() -> Int?
 
+    /// 物理连着的外接屏各自走的接口(传输节点路径,如 `Port-HDMI@1/DisplayPort`、
+    /// `Port-USB-C@1/CIO/DisplayPort@0`),与 `liveExternalCount` 同源。只用于诊断日志。
+    /// `nil` = 查询失败。
+    func liveExternalPorts() -> [String]?
+
     /// 注册「显示器被物理拔掉」的**内核事件**监听(IOKit 服务终止通知),用于全黑救援。
     ///
     /// 为什么不用 CoreGraphics 的 `CGDisplayRegisterReconfigurationCallback`:
@@ -43,7 +64,7 @@ public protocol SystemDisplayService {
     ///
     /// 同一次拔线会连着回调多次(实测一次拔线来了 6 条),且不一定是拔线,故 handler 必须幂等、
     /// 自行判断要不要救。
-    func observeDisplayDisconnect(_ handler: @escaping () -> Void)
+    func observeDisplayDisconnect(_ handler: @escaping (DisplayDisconnectSignal) -> Void)
 
     /// 系统里**存在但未点亮**的显示器 ID —— 直接问系统要真相,不依赖本 app 的任何记账。
     ///

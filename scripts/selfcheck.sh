@@ -50,7 +50,7 @@ print("\n【属性键 + 行为】符号在 ≠ 行为对,这里查的是行为")
 let svc = CGDisplayService()
 check("AppleClamshellState 可读", svc.isClamshellClosed() != nil, "盖子合着=\(String(describing: svc.isClamshellClosed()))")
 let live = svc.liveExternalCount() ?? -1
-check("EDID 键仍能数出外接屏", live >= 0, "带 EDID 的节点=\(live)")
+check("EDID 键仍能数出外接屏", live >= 0, "带 EDID 的节点=\(live) \(svc.liveExternalPorts() ?? [])")
 check("isSupported", svc.isSupported)
 let activeExt = svc.activeDisplays().filter { !$0.isBuiltin }.count
 check("物理外接屏数 ≥ 活跃外接屏数", live >= activeExt, "物理=\(live) 活跃外接=\(activeExt)")
@@ -74,14 +74,15 @@ if CommandLine.arguments.contains("--plug") {
     let before = svc.liveExternalCount() ?? -1
     print("\n【拔线通知】需要动手:当前外接屏 \(before) 块,请在 60 秒内拔掉其中一块(HDMI 或拓展坞均可)……")
     var atNotice: Int?
-    svc.observeDisplayDisconnect {
+    var kind = ""
+    svc.observeDisplayDisconnect { signal in
         // 通知也会因插线、充电等别的变化而来;只认「到达这一刻计数已经减少」的那一次。
-        if atNotice == nil, let now = svc.liveExternalCount(), now < before { atNotice = now }
+        if atNotice == nil, let now = svc.liveExternalCount(), now < before { atNotice = now; kind = signal.logText }
     }
     let deadline = Date().addingTimeInterval(60)
     while atNotice == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
     check("拔线通知到达,且到达时计数已减少", before > 0 && atNotice != nil,
-          "拔线前=\(before) 通知时=\(atNotice.map(String.init) ?? "60 秒内没等到")")
+          "拔线前=\(before) 通知时=\(atNotice.map { "\($0)(\(kind))" } ?? "60 秒内没等到")")
 }
 
 print("\n【AppKit 通知名】")

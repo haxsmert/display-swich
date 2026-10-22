@@ -24,6 +24,10 @@ final class MockService: SystemDisplayService {
     var liveQueryFails = false
     private var liveConnected: Set<CGDirectDisplayID>
     func liveExternalCount() -> Int? { liveQueryFails ? nil : liveConnected.count }
+    /// 物理连着的外接屏各自走的接口,与计数同源。真机上是节点路径,如 `Port-HDMI@1/DisplayPort`。
+    func liveExternalPorts() -> [String]? {
+        liveQueryFails ? nil : liveConnected.sorted().map { "Port-Mock@\($0)/DisplayPort" }
+    }
 
     func activeDisplays() -> [DisplayInfo] {
         known.values
@@ -32,10 +36,10 @@ final class MockService: SystemDisplayService {
     }
 
     /// 记下注册的拔线回调,测试可用 fireDisconnectNotification() 模拟内核通知到达。
-    private var disconnectHandler: (() -> Void)?
-    func observeDisplayDisconnect(_ handler: @escaping () -> Void) { disconnectHandler = handler }
+    private var disconnectHandler: ((DisplayDisconnectSignal) -> Void)?
+    func observeDisplayDisconnect(_ handler: @escaping (DisplayDisconnectSignal) -> Void) { disconnectHandler = handler }
     /// 模拟内核的拔线终止通知抵达(真机上由 IOKit 派发)。
-    func fireDisconnectNotification() { disconnectHandler?() }
+    func fireDisconnectNotification(_ signal: DisplayDisconnectSignal = .nodeTerminated) { disconnectHandler?(signal) }
 
     /// 盖子状态。`nil` 模拟查不到(非便携机 / 查询失败)。
     var clamshellClosed: Bool? = false
@@ -555,7 +559,7 @@ func kernelDisconnectNotificationTriggersRescue() {
     let ctrl = DisplayController(service: svc)
     // 按 AppDelegate 的方式装配:把救援挂到拔线事件上。
     var rescued = false
-    svc.observeDisplayDisconnect { rescued = ctrl.rescueFromBlackout() }
+    svc.observeDisplayDisconnect { _ in rescued = ctrl.rescueFromBlackout() }
 
     _ = ctrl.toggle(id: 1)                       // 关内建屏(外接屏还亮着,合法)
     svc.fireDisconnectNotification()             // 此刻还没拔线 → 不该救
@@ -602,8 +606,23 @@ func diagnosticsReportsFactsWithoutSideEffects() {
     #expect(text.contains("内建 1"))
     #expect(text.contains("瞬时外接屏=1"))
     #expect(text.contains("屏幕睡眠=false"))
+    #expect(text.contains("外接屏连接=[Port-Mock@4/DisplayPort]"))   // 当时连着哪些接口,一眼分清拓展坞还是 HDMI
     #expect(svc.setCalls.count == before)          // 纯读,一次系统调用都不发
     #expect(ctrl.menuItems().first { $0.id == 1 }?.isOn == false)   // 状态不被改动
+}
+
+@Test("诊断快照列出的接口跟着物理连接走:拔掉的那块不再出现,查不到时如实写查询失败")
+func diagnosticsPortsFollowPhysicalConnection() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0),
+                                makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    #expect(ctrl.blackoutDiagnostics().contains("外接屏连接=[Port-Mock@4/DisplayPort, Port-Mock@5/DisplayPort]"))
+    svc.unplug(4)
+    #expect(ctrl.blackoutDiagnostics().contains("外接屏连接=[Port-Mock@5/DisplayPort]"))
+    svc.liveQueryFails = true
+    #expect(ctrl.blackoutDiagnostics().contains("外接屏连接=查询失败"))
 }
 
 // MARK: - 合盖 / 开盖(2026-09-18 事故:拔坞合盖走人,到新地点开盖仍全黑)
@@ -657,7 +676,7 @@ func lidOpenAfterBlackoutRescuesBuiltIn() {
     svc.hasBuiltIn = true
     let ctrl = DisplayController(service: svc)
     // 按 AppDelegate 的方式装配**两个**触发源。
-    svc.observeDisplayDisconnect { _ = ctrl.rescueFromBlackout() }
+    svc.observeDisplayDisconnect { _ in _ = ctrl.rescueFromBlackout() }
     svc.observeBuiltInMayBecomeAvailable { _ = ctrl.rescueFromBlackout() }
 
     _ = ctrl.toggle(id: 1)                      // 关内建屏
@@ -748,7 +767,7 @@ func displayWakeAfterBlackoutRescuesBuiltIn() {
     svc.hasBuiltIn = true
     let ctrl = DisplayController(service: svc)
     // 按 AppDelegate 的方式装配两个触发源。
-    svc.observeDisplayDisconnect { _ = ctrl.rescueFromBlackout() }
+    svc.observeDisplayDisconnect { _ in _ = ctrl.rescueFromBlackout() }
     svc.observeBuiltInMayBecomeAvailable { _ = ctrl.rescueFromBlackout() }
 
     _ = ctrl.toggle(id: 1)                      // 关内建屏,两块外接屏办公

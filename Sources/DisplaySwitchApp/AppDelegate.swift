@@ -34,8 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 为什么不是 `CGDisplayRegisterReconfigurationCallback`——实测(2026-09-07 拔拓展坞现场):
         // 拔线与插回全程该回调**一次都没派发**(它只对配置变更如改分辨率派发);
         // 同一刻 `CGGetActiveDisplayList` 还报着拔线前的 3 块屏。v1.0.6 曾建在它上面,实为死代码。
-        service.observeDisplayDisconnect { [weak self] in
-            self?.attemptRescue(trigger: "拔线通知抵达")
+        service.observeDisplayDisconnect { [weak self] signal in
+            self?.attemptRescue(trigger: "拔线通知抵达(\(signal.logText))")
         }
         // ② 开盖 / 唤醒:全黑**能被解除**的那一刻。
         // 只挂 ① 是不够的:真实动线是「拔坞 → 合盖 → 走人 → 到新地点开盖」,拔线那一刻盖子

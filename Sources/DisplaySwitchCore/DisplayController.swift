@@ -215,8 +215,11 @@ public final class DisplayController {
         let ext = all.filter { !$0.isBuiltin }.count
         let live = service.liveExternalCount().map(String.init) ?? "查询失败"
         let asleep = service.isDisplaySystemAsleep().map(String.init) ?? "查询失败"
+        // 连着哪些接口:拓展坞与机身 HDMI 的拔线机制不同(见 §7.3),事后靠它分清是哪条路径。
+        let ports = service.liveExternalPorts().map { "[\($0.joined(separator: ", "))]" } ?? "查询失败"
         return "本app已关屏=\(all.count)(内建 \(all.count - ext) / 外接 \(ext))"
              + " | 瞬时外接屏=\(live) | 有内建面板=\(service.hasBuiltInDisplay()) | 屏幕睡眠=\(asleep)"
+             + " | 外接屏连接=\(ports)"
     }
 
     /// 启动兜底:把系统里「上一次进程遗留的、还关着的屏」全部点亮。返回真正点亮的块数。
