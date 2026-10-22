@@ -19,6 +19,8 @@ final class StatusPanelController: NSObject {
     private var observers: [NSObjectProtocol] = []
     private var eventMonitors: [Any] = []
     private var modelChange: AnyCancellable?
+    /// 逻辑上开着没有。渐隐的 0.1 秒里窗口仍「可见」,开关判断不能看窗口可见与否。
+    private var isOpen = false
 
     init(controller: DisplayController) {
         let model = PanelModel(controller: controller)
@@ -56,7 +58,7 @@ final class StatusPanelController: NSObject {
         // 那个窗口对象也可能被系统换掉,所以不绑定具体对象,到达时再比对是不是图标的窗口。
         for name in [NSWindow.didMoveNotification, NSWindow.didChangeScreenNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
-                guard let self, self.panel.isVisible,
+                guard let self, self.isOpen,
                       let window = note.object as? NSWindow, window === self.statusItem.button?.window else { return }
                 self.placePanel()
             })
@@ -64,7 +66,7 @@ final class StatusPanelController: NSObject {
         // 屏幕增减、主屏变化:兜一次重新定位(图标窗口若被换掉、上面那条没对上,这里补上)。
         observers.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                             object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.panel.isVisible else { return }
+            guard let self, self.isOpen else { return }
             self.placePanelWhenIconReady()
         })
         // 别的 app 被激活(⌘Tab 或点了它)时收起,与系统菜单的习惯一致。
@@ -77,12 +79,12 @@ final class StatusPanelController: NSObject {
         })
         // 内容变了(多了一行锁住原因、屏数变化)就按新尺寸重新摆放。
         modelChange = model.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { if self?.panel.isVisible == true { self?.placePanel() } }
+            DispatchQueue.main.async { if self?.isOpen == true { self?.placePanel() } }
         }
     }
 
     @objc private func togglePanel(_ sender: Any?) {
-        panel.isVisible ? closePanel() : showPanel()
+        isOpen ? closePanel() : showPanel()
     }
 
     /// 启动参数 `--show-panel` 用:刚启动时菜单栏图标的窗口虽已建好,尺寸还是 0(实测 40×0),
@@ -98,16 +100,33 @@ final class StatusPanelController: NSObject {
     func showPanel() {
         // 每次打开都重新读系统真相(面板开着时另由屏幕参数变化通知刷新)。
         model.reload()
-        placePanel()
+        isOpen = true
+        placePanel(animated: false)
+        if !panel.isVisible { panel.alphaValue = 0 }
         panel.makeKeyAndOrderFront(nil)
+        // 渐显,节奏与系统菜单一致;正在渐隐时再打开,就从当前透明度直接回到不透明。
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
         installEventMonitors()
     }
 
     private func closePanel() {
-        guard panel.isVisible else { return }
-        panel.orderOut(nil)
+        guard isOpen else { return }
+        isOpen = false
         eventMonitors.forEach(NSEvent.removeMonitor)
         eventMonitors.removeAll()
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.1
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            // 渐隐期间又被打开了,就别收。
+            guard let self, !self.isOpen else { return }
+            self.panel.orderOut(nil)
+        })
     }
 
     private func installEventMonitors() {
@@ -140,7 +159,8 @@ final class StatusPanelController: NSObject {
     }
 
     /// 把面板贴在图标正下方,水平居中对齐图标,超出屏幕边缘时往里收。
-    private func placePanel() {
+    /// `animated`:同一块屏上挪位置时平滑跟过去;换屏、尺寸变化、刚打开时直接就位。
+    private func placePanel(animated: Bool = true) {
         guard let icon = iconFrame() else { return }
         let size = hosting.fittingSize
         let screen = statusItem.button?.window?.screen ?? NSScreen.screens.first { $0.frame.contains(icon.origin) }
@@ -151,7 +171,17 @@ final class StatusPanelController: NSObject {
         // 箭尖贴近图标下沿;箭头对准图标中线(面板被屏幕边缘往里推时也一样)。
         let frame = NSRect(x: x, y: icon.minY - size.height - 2, width: size.width, height: size.height)
         arrow.x = icon.midX - x
-        panel.setFrame(frame, display: true)
+        guard frame != panel.frame else { return }
+        let sameScreen = panel.screen != nil && panel.screen == screen
+        if animated, isOpen, sameScreen, frame.size == panel.frame.size {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
     }
 
     /// 主屏刚变时图标正在搬家,位置可能一时还是 0 或旧值;等它就位再摆,最多等 2 秒。

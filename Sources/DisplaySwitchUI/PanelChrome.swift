@@ -26,7 +26,8 @@ public struct PanelChrome<Content: View>: View {
         // 而裁剪会让按钮里的图标在截图工具的离屏渲染中丢失(实测,app 里不受影响)。
         content
             .padding(.top, Self.arrowHeight)
-            .background(shape.fill(Color(nsColor: .windowBackgroundColor)))
+            // 面板底用系统的控件底色(浅色模式下是纯净的浅底):窗口底色偏灰,与淡蓝的「开着」行混出浑浊的灰紫(实测)。
+            .background(shape.fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(shape.stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
     }
 }
