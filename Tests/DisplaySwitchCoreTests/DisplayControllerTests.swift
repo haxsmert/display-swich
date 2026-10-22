@@ -24,8 +24,8 @@ final class MockService: SystemDisplayService {
     var liveQueryFails = false
     private var liveConnected: Set<CGDirectDisplayID>
     func liveExternalCount() -> Int? { liveQueryFails ? nil : liveConnected.count }
-    /// 物理连着的外接屏各自走的接口,与计数同源。真机上是节点路径,如 `Port-HDMI@1/DisplayPort`。
-    /// 各外接屏走的接口路径;默认是不属于任何已知接法的 `Port-Mock@N/DisplayPort`,测试可改成真实形态。
+    /// 物理连着的外接屏各自走的接口,与计数同源(诊断里原样列出)。真机上是节点路径,如 `Port-HDMI@1/DisplayPort`;
+    /// 默认 `Port-Mock@N/DisplayPort`,测试可改成真实形态。
     var portNames: [CGDirectDisplayID: String] = [:]
     func liveExternalPorts() -> [String]? {
         liveQueryFails ? nil : liveConnected.sorted().map { portNames[$0] ?? "Port-Mock@\($0)/DisplayPort" }
@@ -641,7 +641,7 @@ func diagnosticsPortsFollowPhysicalConnection() {
 
 // MARK: - 面板信息:每块屏的说明行、锁住原因、顶部摘要
 
-@Test("面板说明行:内建 / 外接、接法、分辨率与刷新率;接法唯一时才写")
+@Test("面板说明行:内建 / 外接、分辨率与刷新率;不写接法")
 func panelDetailLines() {
     let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
     svc.hasBuiltIn = true
@@ -653,17 +653,12 @@ func panelDetailLines() {
     let items = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
     #expect(items[1]?.isBuiltin == true)
     #expect(items[1]?.detail == "内建 · 3024×1964")              // 刷新率可变(报 0)时不写 Hz
-    #expect(items[4]?.detail == "外接 · 雷雳 · 3840×2160 · 60Hz")
-    #expect(items[5]?.detail == "外接 · 雷雳 · 3840×2160 · 60Hz")  // 59.94 四舍五入
-
-    // 接法混用(一块 HDMI、一块雷雳):分不清哪块走哪条,宁可不写,也不写错
-    svc.portNames = [4: "Port-HDMI@1/DisplayPort", 5: "Port-USB-C@1/CIO/DisplayPort@0"]
-    #expect(ctrl.menuItems().first { $0.id == 4 }?.detail == "外接 · 3840×2160 · 60Hz")
-    // 只有 HDMI
+    // 曾写过「雷雳」:那只是 Mac 这一端走雷雳隧道,他读到的是显示器那头的线(一块 DP 线、一块 USB-C 线),
+    // 而那一头系统根本不知道——每块屏的记录都只写「信号是 DisplayPort」(2026-10-22 实测)。
+    #expect(items[4]?.detail == "外接 · 3840×2160 · 60Hz")
+    #expect(items[5]?.detail == "外接 · 3840×2160 · 60Hz")      // 59.94 四舍五入
+    // 走机身 HDMI 也一样不写
     svc.unplug(5); svc.portNames = [4: "Port-HDMI@1/DisplayPort"]
-    #expect(ctrl.menuItems().first { $0.id == 4 }?.detail == "外接 · HDMI · 3840×2160 · 60Hz")
-    // 查不到接口:不写接法
-    svc.liveQueryFails = true
     #expect(ctrl.menuItems().first { $0.id == 4 }?.detail == "外接 · 3840×2160 · 60Hz")
 }
 

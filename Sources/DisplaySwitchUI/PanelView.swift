@@ -26,7 +26,7 @@ public struct PanelView: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 18)
                 }
                 ForEach(model.items, id: \.id) { item in
-                    DisplayRow(item: item, supported: model.supported) { model.toggle(item.id) }
+                    DisplayRow(item: item, supported: model.supported, lockedTaps: model.lockedTaps) { model.toggle(item.id) }
                 }
             }
             .padding(.horizontal, 6)
@@ -48,6 +48,7 @@ public struct PanelView: View {
                 if let hint = model.hint {
                     Text("\(Image(systemName: "lock.fill")) \(hint)")
                         .imageScale(.small)
+                        .shakes(on: model.lockedTaps)
                         .transition(.opacity)
                 }
             }
@@ -109,11 +110,13 @@ public struct PanelView: View {
 }
 
 /// 一块屏一行,**整行就是开关**:点一下就切换,没有任何开关控件(他的要求)。
-/// 状态由行首圆形图标表达,关着时文字变淡并写「已关闭」——不只靠颜色;被锁住时整行不可点,
-/// 行尾一把小锁,原因写在顶部提示区。
+/// 状态由行首圆形图标表达,关着时文字变淡并写「已关闭」——不只靠颜色。
+/// 被锁住时行尾一把小锁,原因写在顶部提示区;这一行切不了,但点了要有反应:锁与顶部提示一起抖一下
+/// (他的要求)。所以它不设成不可点,只是没有鼠标经过的高亮——高亮表示「点了会切换」。
 private struct DisplayRow: View {
     let item: DisplayMenuItem
     let supported: Bool
+    let lockedTaps: Int
     let toggle: () -> Void
 
     private var locked: Bool { item.isOn && !item.canToggleOff }
@@ -141,13 +144,14 @@ private struct DisplayRow: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
                     .animatingOnly(.easeInOut(duration: 0.2)) { $0.opacity(locked ? 1 : 0) }
+                    .shakes(on: lockedTaps)
             }
             .padding(.horizontal, 8)
             .frame(height: 46)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(hovering: hovering && clickable))
-        .disabled(!clickable)
+        .buttonStyle(RowButtonStyle(hovering: hovering, interactive: clickable))
+        .disabled(!supported)
         .onHover { hovering = $0 }
         .accessibilityLabel("\(item.label),\(item.isOn ? "已打开" : "已关闭")")
         .accessibilityHint(clickable ? (item.isOn ? "点击关掉" : "点击打开") : (item.lockReason ?? ""))
@@ -176,6 +180,28 @@ private struct StatusIcon: View {
 }
 
 extension View {
+    /// `trigger` 每变一次,左右抖一下——macOS 拒绝输入时的说法(输错密码时登录框那样抖)。
+    /// 只是绘制时的偏移,不改排版,别的东西不会跟着动。macOS 13 没有关键帧动画,不抖。
+    @ViewBuilder
+    func shakes(on trigger: Int) -> some View {
+        if #available(macOS 14.0, *) {
+            keyframeAnimator(initialValue: CGFloat.zero, trigger: trigger) { content, x in
+                content.offset(x: x)
+            } keyframes: { _ in
+                KeyframeTrack {
+                    CubicKeyframe(-5, duration: 0.05)
+                    CubicKeyframe(5, duration: 0.08)
+                    CubicKeyframe(-4, duration: 0.08)
+                    CubicKeyframe(3, duration: 0.07)
+                    CubicKeyframe(-1.5, duration: 0.06)
+                    CubicKeyframe(0, duration: 0.06)
+                }
+            }
+        } else {
+            self
+        }
+    }
+
     /// 只让 `body` 里加的修饰(颜色、透明度)带动画,位置与尺寸的变化一律直接到位。
     ///
     /// 不用 `.animation(_:value:)`:它会把**同一次刷新里**这块视图的位置变化也一起动画。
@@ -196,9 +222,11 @@ extension View {
 /// 行的点击反馈,与系统菜单一致:平时无底色;鼠标经过时一层很淡的圆角高亮,按下时深一点。
 private struct RowButtonStyle: ButtonStyle {
     let hovering: Bool
+    /// 点了会不会切换。被锁住的行点了只会抖一下,不给高亮与按下效果。
+    let interactive: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        let level = configuration.isPressed ? 0.10 : hovering ? 0.06 : 0
+        let level = !interactive ? 0 : configuration.isPressed ? 0.10 : hovering ? 0.06 : 0
         return configuration.label
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)

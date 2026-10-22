@@ -8,6 +8,9 @@ public final class PanelModel: ObservableObject {
     @Published public private(set) var items: [DisplayMenuItem] = []
     /// 顶部提示区的话,见 `panelHint`。
     @Published public private(set) var hint: String?
+    /// 点了被锁住那一行的次数。每多一次,界面就让锁形图标与顶部提示抖一下:
+    /// 锁住后再点要有反应(他的要求),否则看上去像点了没反应。
+    @Published public private(set) var lockedTaps = 0
     @Published public private(set) var supported = true
     @Published public private(set) var lastRescue: Date?
 
@@ -45,9 +48,14 @@ public final class PanelModel: ObservableObject {
     /// 曾用系统开关控件把「目标值」传进来,实测它自己记的状态会落后一步,打开面板后第一下
     /// 传回的总是当前值,于是第一下没反应(2026-10-22)。界面不保存任何开关状态,就不会再错位。
     public func toggle(_ id: CGDirectDisplayID) {
-        controller.toggle(id: id)
+        let done = controller.toggle(id: id)
         reload()
-        // 系统应用配置要一点时间(实测 0.1–0.5 秒),晚一点再读一次,让说明行和摘要对上真实状态。
+        guard done else {
+            // 没切成、而这块屏正被锁住:是点了被锁住的那一行(切不切由 Core 定,这里只认结果)。
+            if items.first(where: { $0.id == id })?.lockReason != nil { lockedTaps += 1 }
+            return
+        }
+        // 系统应用配置要一点时间(实测 0.1–0.5 秒),晚一点再读一次,让说明行和顶部提示对上真实状态。
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.reload() }
     }
 

@@ -7,7 +7,7 @@ public struct DisplayMenuItem: Equatable, Sendable {
     public let isOn: Bool
     public let canToggleOff: Bool
     public let isBuiltin: Bool
-    /// 说明行,如「外接 · 雷雳 · 3840×2160 · 60Hz」「内建 · 已关闭」。
+    /// 说明行,如「外接 · 3840×2160 · 60Hz」「内建 · 已关闭」。
     public let detail: String
     /// 开关被锁住(亮着却不能关)时的原因;能关、或本来就关着时为 nil。
     public let lockReason: String?
@@ -118,20 +118,18 @@ public final class DisplayController {
         // 整组(活跃+已关闭)一起算标签:同名屏按 UUID 稳定编号,关掉其一不丢号、重开不漂移。
         let labels = displayLabels(for: ordered)
         let fallback = builtInFallbackAvailable()
-        let link = sharedLinkLabel(service.liveExternalPorts())
         return ordered.map { d in
             let on = disabled[d.id] == nil
             let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
             return DisplayMenuItem(id: d.id, label: labels[d.id] ?? displayLabel(for: d), isOn: on, canToggleOff: canOff,
-                                   isBuiltin: d.isBuiltin, detail: detailLine(for: d, isOn: on, link: link),
+                                   isBuiltin: d.isBuiltin, detail: detailLine(for: d, isOn: on),
                                    lockReason: (service.isSupported && on && !canOff) ? lockReason : nil)
         }
     }
 
-    /// 说明行:内建 / 外接 → 接法(仅外接、且所有外接屏接法一致时)→ 分辨率与刷新率(亮着时)或「已关闭」。
-    private func detailLine(for d: DisplayInfo, isOn: Bool, link: String?) -> String {
+    /// 说明行:内建 / 外接 → 分辨率与刷新率(亮着时)或「已关闭」。不写接法,原因见 PanelText。
+    private func detailLine(for d: DisplayInfo, isOn: Bool) -> String {
         var parts = [d.isBuiltin ? "内建" : "外接"]
-        if !d.isBuiltin, let link { parts.append(link) }
         if !isOn {
             parts.append("已关闭")
         } else if let mode = service.currentMode(d.id) {
