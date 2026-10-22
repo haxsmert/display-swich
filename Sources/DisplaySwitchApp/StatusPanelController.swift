@@ -21,6 +21,10 @@ final class StatusPanelController: NSObject {
     private var modelChange: AnyCancellable?
     /// 逻辑上开着没有。渐隐的 0.1 秒里窗口仍「可见」,开关判断不能看窗口可见与否。
     private var isOpen = false
+    /// 开着时是否已显示出来。开着却没显示 = 图标正在搬家、还没落进菜单栏,见 `placePanel()`。
+    private var revealed = false
+    /// 面板此刻贴着的图标位置(最近一次落在菜单栏里的位置)。
+    private var anchor: NSRect?
 
     init(controller: DisplayController) {
         let model = PanelModel(controller: controller)
@@ -90,7 +94,7 @@ final class StatusPanelController: NSObject {
     /// 启动参数 `--show-panel` 用:刚启动时菜单栏图标的窗口虽已建好,尺寸还是 0(实测 40×0),
     /// 这时没有位置可贴。每 0.2 秒看一次图标是否有了真实尺寸,有了就弹,最多等 5 秒。
     func showPanelWhenReady(attemptsLeft: Int = 25) {
-        if iconFrame() != nil { showPanel(); return }
+        if let icon = iconFrame(), menuBarScreen(of: icon) != nil { showPanel(); return }
         guard attemptsLeft > 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.showPanelWhenReady(attemptsLeft: attemptsLeft - 1)
@@ -101,21 +105,36 @@ final class StatusPanelController: NSObject {
         // 每次打开都重新读系统真相(面板开着时另由屏幕参数变化通知刷新)。
         model.reload()
         isOpen = true
-        placePanel()
         if !panel.isVisible { panel.alphaValue = 0 }
+        placePanel()        // 贴到图标下并渐显
         panel.makeKeyAndOrderFront(nil)
-        // 渐显,节奏与系统菜单一致;正在渐隐时再打开,就从当前透明度直接回到不透明。
+        installEventMonitors()
+    }
+
+    /// 渐显,节奏与系统菜单一致;正在渐隐时再打开,就从当前透明度直接回到不透明。
+    private func reveal() {
+        guard !revealed else { return }
+        revealed = true
+        panel.ignoresMouseEvents = false
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
         }
-        installEventMonitors()
+    }
+
+    /// 立刻藏起(逻辑上仍开着):面板此刻在错的位置,不能让它在那里多停一帧。
+    private func conceal() {
+        revealed = false
+        anchor = nil
+        panel.ignoresMouseEvents = true
+        panel.alphaValue = 0
     }
 
     private func closePanel() {
         guard isOpen else { return }
         isOpen = false
+        revealed = false
         eventMonitors.forEach(NSEvent.removeMonitor)
         eventMonitors.removeAll()
         NSAnimationContext.runAnimationGroup({ context in
@@ -152,43 +171,60 @@ final class StatusPanelController: NSObject {
         }
     }
 
-    /// 菜单栏图标在屏幕上的位置;图标还没摆好时返回 nil。
-    ///
-    /// 「没摆好」有两种(实测):刚启动时尺寸为 0(40×0);主屏切换时,图标窗口会先被放到新屏
-    /// 左上角**之外**的占位点 `(0, 1080)`——整个图标在新屏的上边缘以上,不在任何屏的菜单栏里——
-    /// 约 3 毫秒后才到真实位置。面板若贴过去,就会先闪到屏幕左上角(他看到的「从左上角飘过去」)。
-    /// 判据取原理而非取值:图标中心不在任何一块屏上,就没有菜单栏可贴。
+    /// 菜单栏图标所在窗口的位置;刚启动时尺寸还是 0(实测 40×0),返回 nil。
     private func iconFrame() -> NSRect? {
         guard let frame = statusItem.button?.window?.frame, frame.height > 0 else { return nil }
-        let center = NSPoint(x: frame.midX, y: frame.midY)
-        guard NSScreen.screens.contains(where: { $0.frame.contains(center) }) else { return nil }
         return frame
+    }
+
+    /// 图标正处在哪块屏的菜单栏里:中心落在该屏顶端、与图标等高的那一条里(图标窗口与菜单栏等高)。
+    /// 不在任何菜单栏里返回 nil——那是图标搬家途中的过渡位置,没有东西画在那里。
+    private func menuBarScreen(of icon: NSRect) -> NSScreen? {
+        NSScreen.screens.first { s in
+            icon.midX >= s.frame.minX && icon.midX < s.frame.maxX
+                && icon.midY >= s.frame.maxY - icon.height && icon.midY <= s.frame.maxY
+        }
     }
 
     /// 把面板贴在图标正下方,水平居中对齐图标,超出屏幕边缘时往里收。
     ///
-    /// **只直接就位,不做跟随动画**:图标每挪一次(菜单栏重排时会连挪几次,实测 1568→1385),
-    /// 面板在同一时刻挪到同一处,看上去与图标是一体的。曾给同屏挪动加过 0.16 秒的平滑,
-    /// 结果面板总是慢图标半拍、从上一个位置滑过去,赶上上面那个占位点就是从左上角飘来(2026-10-22)。
+    /// **面板只跟着真正落在菜单栏里的图标走,且直接就位、不做跟随动画**:图标在菜单栏里挪一次
+    /// (菜单栏重排时会连挪几次,实测 1559→1376),面板同一时刻挪到同一处,看上去与图标是一体的。
+    /// 曾给同屏挪动加过 0.16 秒的平滑,面板总是慢半拍、从上一个位置滑过去(2026-10-22)。
+    ///
+    /// 图标窗口报出的位置不全是图标真在的地方(录屏 + 日志逐帧核对,2026-10-22):
+    /// - 关掉一块非主屏时,它会报一个低 30pt 的位置,约 1 毫秒后回原处;图标本身没动。
+    ///   这时上次贴的位置仍在菜单栏里,面板原地不动——照着贴就是整块面板往下闪一帧。
+    /// - 主屏切换时系统按新主屏重算全局坐标,面板与图标的数值不变、实际却落到了新主屏的
+    ///   左中部;约 0.5 秒后图标才经新屏左上角外的占位点 `(0, 1080)` 落进新菜单栏。
+    ///   这时上次贴的位置已不在任何菜单栏里,面板立刻藏起,等图标落定再在它下面渐显——
+    ///   照着贴或原地不动,都是先停在别处、再跳(或飘)到图标下(他看到的「从左上角飘过去」)。
     private func placePanel() {
-        guard let icon = iconFrame() else { return }
-        let size = hosting.fittingSize
-        let screen = NSScreen.screens.first { $0.frame.contains(NSPoint(x: icon.midX, y: icon.midY)) }
-        var x = icon.midX - size.width / 2
-        if let visible = screen?.visibleFrame {
-            x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
+        guard isOpen, let icon = iconFrame() else { return }
+        guard let screen = menuBarScreen(of: icon) else {
+            if let anchor, menuBarScreen(of: anchor) != nil { return }
+            conceal()
+            return
         }
+        let size = hosting.fittingSize
+        var x = icon.midX - size.width / 2
+        x = min(max(x, screen.visibleFrame.minX + 8), screen.visibleFrame.maxX - size.width - 8)
         // 箭尖贴近图标下沿;箭头对准图标中线(面板被屏幕边缘往里推时也一样)。
         let frame = NSRect(x: x, y: icon.minY - size.height - 2, width: size.width, height: size.height)
         arrow.x = icon.midX - x
-        guard frame != panel.frame else { return }
-        panel.setFrame(frame, display: true)
+        anchor = icon
+        if frame != panel.frame { panel.setFrame(frame, display: true) }
+        reveal()
     }
 
     /// 主屏刚变时图标正在搬家,通知不一定每一步都有;隔一会儿再对一次位置,最多 2 秒。
     private func placePanelWhenIconReady(attemptsLeft: Int = 10) {
         placePanel()
-        guard attemptsLeft > 0 else { return }
+        guard attemptsLeft > 0 else {
+            // 2 秒后图标仍没落进菜单栏(如菜单栏被设为自动隐藏):不能一直隐身开着,收起。
+            if isOpen, !revealed { closePanel() }
+            return
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.placePanelWhenIconReady(attemptsLeft: attemptsLeft - 1)
         }

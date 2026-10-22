@@ -5,3 +5,4 @@
 - [显示器睡眠中救援会忙等](rescue-during-display-sleep-spins.md) — 硬试会在主线程卡约 10 秒并失败;v1.0.15 改为等唤醒,已真机验收并发版
 - [显示故障先恢复再汇报(本项目落法)](restore-visibility-before-reporting.md) — 通用规矩在全局 CLAUDE.md;这里记残影屏怎么恢复、拔插前先查卡死
 - [替换运行中的实例会让关掉的屏亮回](swapping-running-instance-relights-screens.md) — 换候选版前先记下旧实例关了哪些屏、哪块是主屏,换完立刻关回去
+- [动效修复要录屏逐帧验收](verify-animation-by-screen-recording.md) — 凭推理宣布修好两次都被他打回;附录屏、拆帧、免手点的做法

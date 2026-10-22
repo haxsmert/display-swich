@@ -34,10 +34,19 @@ final class MockService: SystemDisplayService {
     var modes: [CGDirectDisplayID: DisplayMode] = [:]
     func currentMode(_ id: CGDirectDisplayID) -> DisplayMode? { activeIDs.contains(id) ? modes[id] : nil }
 
+    /// 名字暂时取不到的屏:真机上刚点亮的屏,CoreGraphics 的活跃列表立刻就有它,
+    /// 但屏名来源(AppKit 的屏幕列表)要晚一阵才更新,这期间名字是空的(2026-10-22 实测)。
+    var nameLagging: Set<CGDirectDisplayID> = []
+
     func activeDisplays() -> [DisplayInfo] {
         known.values
             .filter { activeIDs.contains($0.id) }
             .sorted { $0.bounds.minX < $1.bounds.minX }
+            .map { d in
+                guard nameLagging.contains(d.id) else { return d }
+                return DisplayInfo(id: d.id, uuid: d.uuid, name: "", bounds: d.bounds,
+                                   isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive)
+            }
     }
 
     /// 记下注册的拔线回调,测试可用 fireDisconnectNotification() 模拟内核通知到达。
@@ -705,6 +714,24 @@ func panelSummaryShowsLockHint() {
     #expect(panelSummary(ctrl.menuItems()) == "至少要保留一块屏幕点亮")
     _ = ctrl.toggle(id: 4)                                    // 再开回一块:不再锁住,摘要恢复计数
     #expect(panelSummary(ctrl.menuItems()) == "3 块屏 · 2 块亮着")
+}
+
+@Test("刚点亮的屏一时取不到名字:面板上的名字与顺序都不能变")
+func justEnabledDisplayKeepsNameAndOrder() {
+    // 真机(2026-10-22):点亮后立刻重读,屏名为空 → 退成「显示器」、排到最后,
+    // 几毫秒后名字到了又跳回原位;行首图标的动画把这一跳播了出来,看上去是「从上面滑下来」。
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0, name: "Built-in Retina Display"),
+                                makeInfo(id: 2, x: -1920), makeInfo(id: 4, main: true, x: 1920)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    let lit = ctrl.menuItems()
+    _ = ctrl.toggle(id: 2)
+    svc.nameLagging = [2]                                         // 点亮那一刻名字还没到
+    _ = ctrl.toggle(id: 2)
+    let relit = ctrl.menuItems()
+    #expect(relit.map(\.id) == lit.map(\.id))
+    #expect(relit.map(\.label) == lit.map(\.label))
+    #expect(relit.first { $0.id == 2 }?.isOn == true)
 }
 
 // MARK: - 合盖 / 开盖(2026-09-18 事故:拔坞合盖走人,到新地点开盖仍全黑)

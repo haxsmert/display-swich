@@ -44,14 +44,16 @@ public struct PanelView: View {
             Text("显示器开关")
                 .font(.system(size: 13, weight: .semibold))
             Spacer(minLength: 8)
-            // 提示区:平时报数,有屏被锁住时写为什么不能关。新旧两句在原地交叉淡化,不挪动别的东西。
+            // 提示区:平时报数,有屏被锁住时写为什么不能关。旧的一句先淡出、新的再淡入,不挪动别的东西;
+            // 曾同时交叉淡化,长短不同的两句叠在一起,中途看是一团糊字(他的截图)。
             // 锁形图标嵌在文字里、随文字排版:单独摆一个图标会把这一行撑高 1pt,面板跟着跳(截图实测)。
             ZStack(alignment: .trailing) {
                 Text(hasLockedRow ? "\(Image(systemName: "lock.fill")) \(model.summary)" : "\(model.summary)")
                     .monospacedDigit()
                     .imageScale(.small)
                     .id(model.summary)
-                    .transition(.opacity)
+                    .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.12).delay(0.08)),
+                                            removal: .opacity.animation(.easeIn(duration: 0.08))))
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
@@ -120,6 +122,9 @@ private struct DisplayRow: View {
 
     private var locked: Bool { item.isOn && !item.canToggleOff }
     private var clickable: Bool { supported && !locked }
+    /// 鼠标在不在这一行上。在行外层跟踪(不放进按钮样式):行被锁住时按钮不收悬停事件,
+    /// 鼠标趁这时离开,解锁后这一行会一直亮着高亮(他的截图里最后一行就是)。
+    @State private var hovering = false
 
     var body: some View {
         Button(action: toggle) {
@@ -139,23 +144,22 @@ private struct DisplayRow: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
-                    .opacity(locked ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.2), value: locked)
+                    .animatingOnly(.easeInOut(duration: 0.2)) { $0.opacity(locked ? 1 : 0) }
             }
             .padding(.horizontal, 8)
             .frame(height: 46)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle())
+        .buttonStyle(RowButtonStyle(hovering: hovering && clickable))
         .disabled(!clickable)
+        .onHover { hovering = $0 }
         .accessibilityLabel("\(item.label),\(item.isOn ? "已打开" : "已关闭")")
         .accessibilityHint(clickable ? (item.isOn ? "点击关掉" : "点击打开") : (item.lockReason ?? ""))
     }
 }
 
 /// 行首的圆形状态图标(取法控制中心):开着为强调色实心圆 + 白色图形,关着为浅灰圆 + 灰色图形。
-/// 动画只作用在颜色上,原地渐变——曾把动画挂在整行上,连带行内位置、尺寸的变化一起动,
-/// 他看到的是「蓝色从别处浮过来」(2026-10-22)。
+/// 动画**只作用在颜色与透明度上**,原地渐变,见 `animatingOnly`。
 private struct StatusIcon: View {
     let symbol: String
     let isOn: Bool
@@ -166,37 +170,45 @@ private struct StatusIcon: View {
                 .fill(Color.primary.opacity(0.08))
             Circle()
                 .fill(Color(nsColor: .controlAccentColor))
-                .opacity(isOn ? 1 : 0)
+                .animatingOnly(.easeInOut(duration: 0.2)) { $0.opacity(isOn ? 1 : 0) }
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isOn ? Color.white : Color.secondary)
+                .animatingOnly(.easeInOut(duration: 0.2)) { $0.foregroundStyle(isOn ? Color.white : Color.secondary) }
         }
         .frame(width: 28, height: 28)
-        .animation(.easeInOut(duration: 0.2), value: isOn)
+    }
+}
+
+extension View {
+    /// 只让 `body` 里加的修饰(颜色、透明度)带动画,位置与尺寸的变化一律直接到位。
+    ///
+    /// 不用 `.animation(_:value:)`:它会把**同一次刷新里**这块视图的位置变化也一起动画。
+    /// 曾因此,行在那一刻被挪动(见 `DisplayController.activeDisplays()`)时,圆形图标从别的位置
+    /// 一路滑过来——先是「蓝色从别处浮过来」,后是「从上往下滑出来」(他两次指出,2026-10-22)。
+    /// macOS 13 没有限定范围的动画,直接到位、不做动画。
+    @ViewBuilder
+    func animatingOnly<Modified: View>(_ animation: Animation,
+                                       @ViewBuilder _ body: @escaping (AnyView) -> Modified) -> some View {
+        if #available(macOS 14.0, *) {
+            self.animation(animation) { body(AnyView($0)) }
+        } else {
+            body(AnyView(self))
+        }
     }
 }
 
 /// 行的点击反馈,与系统菜单一致:平时无底色;鼠标经过时一层很淡的圆角高亮,按下时深一点。
 private struct RowButtonStyle: ButtonStyle {
+    let hovering: Bool
+
     func makeBody(configuration: Configuration) -> some View {
-        RowBody(configuration: configuration)
-    }
-
-    private struct RowBody: View {
-        let configuration: ButtonStyle.Configuration
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var hovering = false
-
-        var body: some View {
-            let level = !isEnabled ? 0 : configuration.isPressed ? 0.10 : hovering ? 0.06 : 0
-            configuration.label
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(level))
-                        .animation(.easeOut(duration: 0.12), value: level)
-                )
-                .onHover { hovering = $0 }
-        }
+        let level = configuration.isPressed ? 0.10 : hovering ? 0.06 : 0
+        return configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary)
+                    .animatingOnly(.easeOut(duration: 0.12)) { $0.opacity(level) }
+            )
     }
 }
 

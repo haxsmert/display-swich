@@ -24,9 +24,27 @@ public final class DisplayController {
     private let service: SystemDisplayService
     /// 被本 app 关掉的屏(关闭前捕获的快照),用于在菜单里仍能显示并恢复。
     private var disabled: [CGDirectDisplayID: DisplayInfo] = [:]
+    /// 每块屏最近一次取到的名字(键为 UUID,取不到 UUID 时用 display ID)。见 `activeDisplays()`。
+    private var knownNames: [String: String] = [:]
 
     public init(service: SystemDisplayService) {
         self.service = service
+    }
+
+    /// 当前活跃的屏;名字暂时取不到的,沿用这块屏上次的名字。
+    ///
+    /// 屏名来自 AppKit 的屏幕列表,它比 CoreGraphics 的活跃列表更新得晚:实测(2026-10-22)点亮一块外接屏后,
+    /// 活跃列表立刻就有它,屏幕列表 1.8 秒后仍没有,这期间名字是空的。空名会退成「显示器」——标签变了,
+    /// 按名字排序还会把它排到最后,几毫秒后名字到了又跳回原位:面板那一行先跳走再跳回,
+    /// 行首图标的动画把这一跳播了出来(他看到的「从上面滑下来」)。屏的名字不会变,空名只说明「还没取到」。
+    private func activeDisplays() -> [DisplayInfo] {
+        service.activeDisplays().map { d in
+            let key = d.uuid.isEmpty ? "id-\(d.id)" : d.uuid
+            if !d.name.isEmpty { knownNames[key] = d.name; return d }
+            guard let name = knownNames[key] else { return d }
+            return DisplayInfo(id: d.id, uuid: d.uuid, name: name, bounds: d.bounds,
+                               isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive)
+        }
     }
 
     /// 系统是否支持开关(私有符号存在)。不支持时 UI 应只读并提示,各项 canToggleOff 亦为 false。
@@ -79,7 +97,7 @@ public final class DisplayController {
     }
 
     public func menuItems() -> [DisplayMenuItem] {
-        let active = service.activeDisplays()
+        let active = activeDisplays()
         reconcileDisabled(active: active)
         var byID: [CGDirectDisplayID: DisplayInfo] = [:]
         // 被关掉的外接屏若已被物理拔走就不显示(不留幽灵),插回来则重新显示(不失联)。
@@ -133,7 +151,7 @@ public final class DisplayController {
         guard service.isSupported else { return false }
         // 先与系统真实活跃状态对账:被系统在 app 之外重新点亮的屏要从 disabled 剔除,
         // 否则一块已经活跃的屏会被误当成「关着」而走进开屏分支。
-        let active = service.activeDisplays()
+        let active = activeDisplays()
         reconcileDisabled(active: active)
         // 当前关着 → 打开
         if disabled[id] != nil {
