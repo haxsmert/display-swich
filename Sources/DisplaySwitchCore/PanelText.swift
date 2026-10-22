@@ -31,10 +31,10 @@ func modeText(_ mode: DisplayMode) -> String {
     return hz > 0 ? "\(size) · \(hz)Hz" : size
 }
 
-/// 面板顶部的一句话摘要,同时是提示区(他的设计):平时报数,有屏被锁住时就说为什么不能关。
-/// 提示放在这里而不是被锁住那一行里,行高就不会变,面板不会跳。
-public func panelSummary(_ items: [DisplayMenuItem]) -> String {
-    guard !items.isEmpty else { return "没有检测到显示器" }
-    if let reason = items.lazy.compactMap(\.lockReason).first { return reason }
-    return "\(items.count) 块屏 · \(items.filter(\.isOn).count) 块亮着"
+/// 面板顶部提示区要写的话;没什么要说的时候为 nil,提示区就空着。
+/// 目前只有一种情况要说:只剩最后一块亮着、被锁住,写清为什么不能关。
+/// 放在顶部而不是被锁住那一行里,行高就不会变,面板不会跳(他的设计)。
+/// 曾在平时报数「3 块屏 · 2 块亮着」,他指出没用:每行行首的图标已经写明开没开(2026-10-22)。
+public func panelHint(_ items: [DisplayMenuItem]) -> String? {
+    items.lazy.compactMap(\.lockReason).first
 }

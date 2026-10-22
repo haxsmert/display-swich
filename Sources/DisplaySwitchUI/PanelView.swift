@@ -3,19 +3,17 @@ import DisplaySwitchCore
 
 /// 菜单栏弹出面板。
 ///
-/// 视觉取法 macOS 27 自己的菜单栏面板(控制中心):系统玻璃底、大圆角;行没有底色与描边,
+/// 视觉取法 macOS 27 自己的菜单栏面板(控制中心):底是系统材质(见 `PanelBackground`);行没有底色与描边,
 /// 开关状态由行首的圆形图标表达——开着是强调色实心圆、白色图形,关着是浅灰圆(同控制中心的
 /// Wi-Fi、蓝牙);鼠标经过时只出现一层很淡的圆角高亮,与系统菜单一致。
 /// 不用鼠标悬停提示(他认为低级):需要说明的话直接写在顶部的提示区。
 ///
-/// **布局在交互中保持不动**:每行高度固定;锁住原因写在顶部摘要的位置(他的设计),
+/// **布局在交互中保持不动**:每行高度固定;锁住原因写在顶部提示区(他的设计),
 /// 不在行里加字——曾因多出一行让面板长高、整体跳动,打乱他接下来要点的位置(2026-10-22)。
 public struct PanelView: View {
     @ObservedObject var model: PanelModel
 
     public init(model: PanelModel) { self.model = model }
-
-    private var hasLockedRow: Bool { model.items.contains { $0.lockReason != nil } }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -44,21 +42,19 @@ public struct PanelView: View {
             Text("显示器开关")
                 .font(.system(size: 13, weight: .semibold))
             Spacer(minLength: 8)
-            // 提示区:平时报数,有屏被锁住时写为什么不能关。旧的一句先淡出、新的再淡入,不挪动别的东西;
-            // 曾同时交叉淡化,长短不同的两句叠在一起,中途看是一团糊字(他的截图)。
+            // 提示区(他的设计):平时空着,只剩最后一块亮着被锁住时写原因,原地淡入淡出。
             // 锁形图标嵌在文字里、随文字排版:单独摆一个图标会把这一行撑高 1pt,面板跟着跳(截图实测)。
             ZStack(alignment: .trailing) {
-                Text(hasLockedRow ? "\(Image(systemName: "lock.fill")) \(model.summary)" : "\(model.summary)")
-                    .monospacedDigit()
-                    .imageScale(.small)
-                    .id(model.summary)
-                    .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.12).delay(0.08)),
-                                            removal: .opacity.animation(.easeIn(duration: 0.08))))
+                if let hint = model.hint {
+                    Text("\(Image(systemName: "lock.fill")) \(hint)")
+                        .imageScale(.small)
+                        .transition(.opacity)
+                }
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .animation(.easeInOut(duration: 0.2), value: model.summary)
+            .animation(.easeInOut(duration: 0.15), value: model.hint)
         }
         .padding(.horizontal, 14)
         .padding(.top, 13)

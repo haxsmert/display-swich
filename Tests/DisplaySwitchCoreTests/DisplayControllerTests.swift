@@ -694,26 +694,19 @@ func lockReasons() {
     #expect(items[1]?.lockReason == nil)                              // 关着的屏随时能开
 }
 
-@Test("面板摘要:共几块、几块亮着")
-func panelSummaryLine() {
+@Test("顶部提示区:平时不写;只剩最后一块亮着、被锁住时写锁住原因")
+func panelHintOnlyWhenLocked() {
+    // 曾在这里报数(「3 块屏 · 2 块亮着」),他指出没用:每行行首的图标已经写明开没开(2026-10-22)。
     let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
     svc.hasBuiltIn = true
     let ctrl = DisplayController(service: svc)
-    _ = ctrl.toggle(id: 1)
-    #expect(panelSummary(ctrl.menuItems()) == "3 块屏 · 2 块亮着")
-    #expect(panelSummary([]) == "没有检测到显示器")
-}
-
-@Test("只剩最后一块亮着、被锁住时,顶部摘要就是提示区:改写锁住原因")
-func panelSummaryShowsLockHint() {
-    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
-    svc.hasBuiltIn = true
-    let ctrl = DisplayController(service: svc)
+    #expect(panelHint(ctrl.menuItems()) == nil)
     _ = ctrl.toggle(id: 1)
     _ = ctrl.toggle(id: 4)
-    #expect(panelSummary(ctrl.menuItems()) == "至少要保留一块屏幕点亮")
-    _ = ctrl.toggle(id: 4)                                    // 再开回一块:不再锁住,摘要恢复计数
-    #expect(panelSummary(ctrl.menuItems()) == "3 块屏 · 2 块亮着")
+    #expect(panelHint(ctrl.menuItems()) == "至少要保留一块屏幕点亮")
+    _ = ctrl.toggle(id: 4)                                    // 再开回一块:不再锁住,提示消失
+    #expect(panelHint(ctrl.menuItems()) == nil)
+    #expect(panelHint([]) == nil)                             // 没有屏时列表里自己会写,顶部不重复
 }
 
 @Test("刚点亮的屏一时取不到名字:面板上的名字与顺序都不能变")

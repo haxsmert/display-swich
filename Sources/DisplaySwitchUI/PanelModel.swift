@@ -6,7 +6,8 @@ import DisplaySwitchCore
 /// 面板的数据源。所有文字都由 Core 算好(可单测),这里只负责「什么时候重新读一遍」和转发点击。
 public final class PanelModel: ObservableObject {
     @Published public private(set) var items: [DisplayMenuItem] = []
-    @Published public private(set) var summary = ""
+    /// 顶部提示区的话,见 `panelHint`。
+    @Published public private(set) var hint: String?
     @Published public private(set) var supported = true
     @Published public private(set) var lastRescue: Date?
 
@@ -35,7 +36,7 @@ public final class PanelModel: ObservableObject {
 
     public func reload() {
         items = controller.menuItems()
-        summary = panelSummary(items)
+        hint = panelHint(items)
         supported = controller.isSupported
         lastRescue = lastRescueProvider()
     }

@@ -14,8 +14,7 @@ final class StatusPanelController: NSObject {
     private let statusItem: NSStatusItem
     private let model: PanelModel
     private let panel: PanelWindow
-    private let hosting: NSHostingView<AnyView>
-    private let arrow: PanelArrow
+    private let hosting: NSHostingView<PanelView>
     private var observers: [NSObjectProtocol] = []
     private var eventMonitors: [Any] = []
     private var modelChange: AnyCancellable?
@@ -28,13 +27,9 @@ final class StatusPanelController: NSObject {
 
     init(controller: DisplayController) {
         let model = PanelModel(controller: controller)
-        let arrow = PanelArrow()
         self.model = model
-        self.arrow = arrow
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        hosting = NSHostingView(rootView: AnyView(
-            PanelChrome(arrow: arrow) { PanelView(model: model) }
-        ))
+        hosting = NSHostingView(rootView: PanelView(model: model))
         // 不激活本 app 的面板:打开时不抢走当前 app 的焦点,面板照样能点、能收 Esc(菜单栏面板的通行做法)。
         panel = PanelWindow(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         super.init()
@@ -45,9 +40,9 @@ final class StatusPanelController: NSObject {
             button.action = #selector(togglePanel(_:))
         }
 
-        panel.contentView = hosting
+        panel.contentView = PanelBackground.wrapping(hosting)
         panel.isOpaque = false
-        panel.backgroundColor = .clear      // 圆角与箭头之外透明;面板的底由 PanelChrome 画(系统玻璃)
+        panel.backgroundColor = .clear      // 圆角之外透明;面板的底是系统材质(见 PanelBackground)
         panel.hasShadow = true
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -171,6 +166,11 @@ final class StatusPanelController: NSObject {
         }
     }
 
+    /// 系统菜单栏菜单相对图标的几何,实测(macOS 27,2026-10-22:临时状态栏菜单弹出后读窗口位置):
+    /// 菜单左缘比图标窗口左缘偏左 5pt,上缘在图标(菜单栏)下沿以下 2pt。照抄,面板的位置就与系统菜单一致。
+    private static let menuInset: CGFloat = 5
+    private static let menuGap: CGFloat = 2
+
     /// 菜单栏图标所在窗口的位置;刚启动时尺寸还是 0(实测 40×0),返回 nil。
     private func iconFrame() -> NSRect? {
         guard let frame = statusItem.button?.window?.frame, frame.height > 0 else { return nil }
@@ -186,7 +186,7 @@ final class StatusPanelController: NSObject {
         }
     }
 
-    /// 把面板贴在图标正下方,水平居中对齐图标,超出屏幕边缘时往里收。
+    /// 把面板贴在图标下方,位置与系统菜单栏菜单相同:左缘对齐图标,紧贴菜单栏下沿;超出屏幕边缘时往里收。
     ///
     /// **面板只跟着真正落在菜单栏里的图标走,且直接就位、不做跟随动画**:图标在菜单栏里挪一次
     /// (菜单栏重排时会连挪几次,实测 1559→1376),面板同一时刻挪到同一处,看上去与图标是一体的。
@@ -207,11 +207,9 @@ final class StatusPanelController: NSObject {
             return
         }
         let size = hosting.fittingSize
-        var x = icon.midX - size.width / 2
+        var x = icon.minX - Self.menuInset
         x = min(max(x, screen.visibleFrame.minX + 8), screen.visibleFrame.maxX - size.width - 8)
-        // 箭尖贴近图标下沿;箭头对准图标中线(面板被屏幕边缘往里推时也一样)。
-        let frame = NSRect(x: x, y: icon.minY - size.height - 2, width: size.width, height: size.height)
-        arrow.x = icon.midX - x
+        let frame = NSRect(x: x, y: icon.minY - Self.menuGap - size.height, width: size.width, height: size.height)
         anchor = icon
         if frame != panel.frame { panel.setFrame(frame, display: true) }
         reveal()

@@ -134,7 +134,7 @@ xattr -dr com.apple.quarantine /Applications/DisplaySwitch.app
 - 用到私有符号（经 `dlsym` 动态解析，无链接期硬依赖），因此**无法上架 App Store**，仅本地 / 自分发。
 - 不关 SIP、不需特殊 entitlement、不申请任何权限。
 - 设计细节与每条结论的实测记录见 [`docs/superpowers/specs/2026-06-18-display-switch-design.md`](docs/superpowers/specs/2026-06-18-display-switch-design.md)。
-- 面板版式参考了 [MonitorBar](https://github.com/Binaryify/MonitorBar)（头部摘要、每屏一张卡片、底部状态栏）。
+- 面板版式参考了 [MonitorBar](https://github.com/Binaryify/MonitorBar)（每屏一张卡片、底部状态栏）。
 
 ## English
 
