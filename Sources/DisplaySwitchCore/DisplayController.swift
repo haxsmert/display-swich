@@ -11,6 +11,12 @@ public struct DisplayMenuItem: Equatable, Sendable {
     public let detail: String
     /// 开关被锁住(亮着却不能关)时的原因;能关、或本来就关着时为 nil。
     public let lockReason: String?
+    /// 这一行可能出现的最长写法,界面按它预留宽度——开关屏、主屏转移时面板不变宽(他不要任何跳动)。
+    /// 标签:任何一块亮着的屏都可能成为主屏,所以都带上主屏标记。
+    public let sizingLabel: String
+    /// 说明行亮着时的写法:关着的屏写「已关闭」,开回来会写分辨率,界面把它与当前写法一起排、取宽的那个。
+    /// 见过它亮着才知道;没见过就是当前写法。
+    public let sizingDetail: String
 }
 
 /// 需要救援、但此刻下指令注定失败时,在等什么。
@@ -24,8 +30,13 @@ public final class DisplayController {
     private let service: SystemDisplayService
     /// 被本 app 关掉的屏(关闭前捕获的快照),用于在菜单里仍能显示并恢复。
     private var disabled: [CGDirectDisplayID: DisplayInfo] = [:]
-    /// 每块屏最近一次取到的名字(键为 UUID,取不到 UUID 时用 display ID)。见 `activeDisplays()`。
+    /// 每块屏最近一次取到的名字(键见 `key(of:)`)。见 `activeDisplays()`。
     private var knownNames: [String: String] = [:]
+    /// 每块屏最近一次亮着时的说明行,给关着的屏预留宽度用(见 `DisplayMenuItem.sizingDetail`)。
+    private var knownLitDetails: [String: String] = [:]
+
+    /// 一块屏的稳定键:UUID,取不到时用 display ID。
+    private func key(of d: DisplayInfo) -> String { d.uuid.isEmpty ? "id-\(d.id)" : d.uuid }
 
     public init(service: SystemDisplayService) {
         self.service = service
@@ -39,9 +50,8 @@ public final class DisplayController {
     /// 行首图标的动画把这一跳播了出来(他看到的「从上面滑下来」)。屏的名字不会变,空名只说明「还没取到」。
     private func activeDisplays() -> [DisplayInfo] {
         service.activeDisplays().map { d in
-            let key = d.uuid.isEmpty ? "id-\(d.id)" : d.uuid
-            if !d.name.isEmpty { knownNames[key] = d.name; return d }
-            guard let name = knownNames[key] else { return d }
+            if !d.name.isEmpty { knownNames[key(of: d)] = d.name; return d }
+            guard let name = knownNames[key(of: d)] else { return d }
             return DisplayInfo(id: d.id, uuid: d.uuid, name: name, bounds: d.bounds,
                                isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive)
         }
@@ -121,9 +131,14 @@ public final class DisplayController {
         return ordered.map { d in
             let on = disabled[d.id] == nil
             let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
-            return DisplayMenuItem(id: d.id, label: labels[d.id] ?? displayLabel(for: d), isOn: on, canToggleOff: canOff,
-                                   isBuiltin: d.isBuiltin, detail: detailLine(for: d, isOn: on),
-                                   lockReason: (service.isSupported && on && !canOff) ? lockReason : nil)
+            let label = labels[d.id] ?? displayLabel(for: d)
+            let detail = detailLine(for: d, isOn: on)
+            if on { knownLitDetails[key(of: d)] = detail }
+            return DisplayMenuItem(id: d.id, label: label, isOn: on, canToggleOff: canOff,
+                                   isBuiltin: d.isBuiltin, detail: detail,
+                                   lockReason: (service.isSupported && on && !canOff) ? lockReason : nil,
+                                   sizingLabel: label.hasSuffix(mainMarker) ? label : label + mainMarker,
+                                   sizingDetail: knownLitDetails[key(of: d)] ?? detail)
         }
     }
 
@@ -141,7 +156,7 @@ public final class DisplayController {
     /// 亮着却不能关时,说清为什么。`canDisable` 判否只有一种情形:关掉后一块亮着的屏都不剩
     /// (且没有可开盖恢复的内建屏兜底),所以原因只有一条,措辞取他本人的说法(2026-10-22)。
     /// 曾按「内建屏被关」另给一句「先打开它才能关这块」,他指出含义不对:规则是保底,不是开内建屏的前提。
-    private var lockReason: String { "至少要保留一块屏幕点亮" }
+    private var lockReason: String { lockReasonText }
 
     @discardableResult
     public func toggle(id: CGDirectDisplayID) -> Bool {

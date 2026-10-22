@@ -1,4 +1,5 @@
 import Foundation
+import DisplaySwitchCore
 
 /// 救援路径的诊断日志。
 ///
@@ -15,7 +16,11 @@ public enum RescueLog {
     /// 重复记录只会把真正的现场淹没。只比上一条,所以状态变过又变回来仍会重新记录。
     private static var lastMessage: String?
 
-    /// 最近一次真的下了恢复指令的时间;从没救援过、或日志读不到时为 nil。面板底部显示它。
+    /// 日志上限。实测每条约 110 字节、一个月约 100 条,256 KB 够留两年左右;超过就只留最新的一半
+    /// (他的要求:不能无限占空间,要自己清理)。救援现场看的是最近的记录,老记录丢了不影响排查。
+    static let sizeLimit = 256 * 1024
+
+    /// 最近一次真的下了恢复指令的时间;从没救援过、或日志读不到时为 nil。开发者工具里显示它。
     public static func lastRescueDate() -> Date? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         guard let line = text.split(separator: "\n").last(where: { $0.contains("已下恢复指令") }),
@@ -35,5 +40,14 @@ public enum RescueLog {
         } else {
             try? data.write(to: url)
         }
+        trimIfNeeded()
+    }
+
+    /// 超过上限就只留最新的一段(见 `trimmedLog`)。日志只在救援事件时写,写完顺手查一次即可。
+    private static func trimIfNeeded() {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        guard size > sizeLimit, let data = try? Data(contentsOf: url),
+              let kept = trimmedLog(data, limit: sizeLimit) else { return }
+        try? kept.write(to: url, options: .atomic)
     }
 }

@@ -1,5 +1,6 @@
 import Testing
 import CoreGraphics
+import Foundation
 @testable import DisplaySwitchCore
 
 /// 可控的假系统服务:维护一份「全集」与「当前活跃」,模拟开关后的活跃变化。
@@ -1028,4 +1029,41 @@ func disabledExternalStaysVisibleWhileConnected() {
     #expect(ctrl.menuItems().contains { $0.id == 4 })   // 所以菜单必须列出它
     #expect(ctrl.menuItems().first { $0.id == 4 }?.isOn == false)
     #expect(ctrl.toggle(id: 4) == true)                 // 点一下就能开回来
+}
+
+// MARK: - 面板定宽
+
+@Test("面板定宽:每行给出开关、主屏转移时可能出现的最长写法,开关屏时面板不变宽")
+func sizingTextCoversToggleStates() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, main: true, x: 0, name: "Built-in Retina Display"),
+                                makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    svc.modes = [1: DisplayMode(pixelWidth: 3024, pixelHeight: 1964, refreshRate: 120),
+                 4: DisplayMode(pixelWidth: 3840, pixelHeight: 2160, refreshRate: 60)]
+    let ctrl = DisplayController(service: svc)
+    let lit = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
+    // 非主屏预留「（主）」:别的屏关掉后它会成为主屏,标签随之变长
+    #expect(lit[4]?.label == "External Display")
+    #expect(lit[4]?.sizingLabel == "External Display（主）")
+    #expect(lit[1]?.sizingLabel == "Built-in Retina Display（主）")
+    #expect(lit[4]?.sizingDetail == "外接 · 3840×2160 · 60Hz")
+    _ = ctrl.toggle(id: 1)                                        // 关掉内建屏
+    let off = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
+    #expect(off[1]?.detail == "内建 · 已关闭")
+    #expect(off[1]?.sizingDetail == "内建 · 3024×1964 · 120Hz")    // 开回来时的写法,关着时也预留
+    #expect(off[1]?.sizingLabel == "Built-in Retina Display（主）")
+    #expect(panelHint(ctrl.menuItems()) == lockReasonText)        // 提示区唯一会出现的一句,界面按它预留
+}
+
+// MARK: - 日志清理
+
+@Test("日志超过上限只留最新的一段,从整行开始")
+func logTrimming() {
+    let data = Data((1...100).map { "第 \($0) 行\n" }.joined().utf8)
+    #expect(trimmedLog(data, limit: data.count) == nil)          // 没超过上限:不动
+    let kept = trimmedLog(data, limit: 400)!
+    #expect(kept.count <= 200)                                    // 留下不到上限的一半,不必每写一条就清一次
+    let text = String(decoding: kept, as: UTF8.self)
+    #expect(text.hasSuffix("第 100 行\n"))                        // 最新的都在
+    #expect(text.hasPrefix("第 "))                                // 不留半行
 }

@@ -59,11 +59,11 @@ public final class PanelModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.reload() }
     }
 
-    /// 菜单底部显示的版本,取自 app bundle 的 Info.plist。
+    /// 底部状态栏显示的版本,取自 app bundle 的 Info.plist。
     /// 直接 `swift run` 起的开发构建没有 bundle 版本号,显示「开发构建」而不是编个假版本。
     public var versionText: String {
         guard let v = bundleVersion, !v.isEmpty else { return "开发构建" }
-        return "版本 \(v)"
+        return "v\(v)"
     }
 
     public func openRepository() {
@@ -71,6 +71,14 @@ public final class PanelModel: ObservableObject {
     }
 
     public func openRescueLog() { NSWorkspace.shared.open(RescueLog.url) }
+
+    /// 把救援判据的当前取值复制到剪贴板,报问题时直接粘贴。带上版本与时间,脱离上下文也看得懂。
+    public func copyDiagnostics() {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let text = "DisplaySwitch \(bundleVersion ?? "开发构建") · \(stamp)\n\(controller.blackoutDiagnostics())\n"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
 
     public func quit() { NSApp.terminate(nil) }
 }

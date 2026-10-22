@@ -9,10 +9,13 @@ func baseName(_ name: String) -> String {
     return stripped.isEmpty ? "显示器" : stripped
 }
 
+/// 标签末尾的主屏标记。
+let mainMarker = "（主）"
+
 /// 单块屏标签:稳定基名 + 主屏标记(无消歧上下文、或同名屏唯一时用)。
 public func displayLabel(for display: DisplayInfo) -> String {
     let base = baseName(display.name)
-    return display.isMain ? "\(base)（主）" : base
+    return display.isMain ? base + mainMarker : base
 }
 
 /// 整组屏的稳定标签:同基名有多块时编号 (1)(2)…,唯一则不加号;主屏额外加(主)。
@@ -27,7 +30,7 @@ public func displayLabels(for displays: [DisplayInfo]) -> [CGDirectDisplayID: St
         let ordered = members.sorted { ($0.uuid, $0.id) < ($1.uuid, $1.id) }
         for (index, d) in ordered.enumerated() {
             var label = ordered.count > 1 ? "\(base) (\(index + 1))" : base
-            if d.isMain { label += "（主）" }
+            if d.isMain { label += mainMarker }
             labels[d.id] = label
         }
     }
