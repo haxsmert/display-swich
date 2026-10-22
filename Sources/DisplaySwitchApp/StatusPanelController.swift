@@ -113,8 +113,14 @@ final class StatusPanelController: NSObject {
     private func installEventMonitors() {
         guard eventMonitors.isEmpty else { return }
         // 点到别的 app 或桌面:收起。全局监听只收得到本 app 以外的点击,点面板本身不会触发。
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown],
-                                                     handler: { [weak self] _ in self?.closePanel() }) {
+        // 但菜单栏图标由系统的菜单栏进程托管,点图标对我们来说也是「外面」的点击:若在这里收起,
+        // 图标自己的点击动作紧接着又把面板打开,看上去就是「再点图标收不起来」(他实测)。
+        // 所以点在图标上的不算外面,交给图标的点击动作去开关。
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+            guard let self else { return }
+            if let icon = self.iconFrame(), icon.contains(NSEvent.mouseLocation) { return }
+            self.closePanel()
+        }) {
             eventMonitors.append(m)
         }
         // Esc 收起。

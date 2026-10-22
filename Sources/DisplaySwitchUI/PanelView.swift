@@ -95,7 +95,8 @@ public struct PanelView: View {
     }
 }
 
-/// 一块屏一张卡片:**整行就是开关**,点哪里都行;右侧的开关图形只显示真实状态,不单独接收点击。
+/// 一块屏一张卡片,**整行就是开关**:点一下就切换,没有任何开关控件(他的要求)。
+/// 开着的行是浅蓝底,关着的行是普通底、图标与文字变淡并写「已关闭」——不只靠颜色区分。
 /// 被锁住时整行不可点,并直接写出原因。
 private struct DisplayRow: View {
     let item: DisplayMenuItem
@@ -124,15 +125,13 @@ private struct DisplayRow: View {
                             .padding(.top, 2)
                     }
                 }
-                Spacer(minLength: 8)
-                SwitchIndicator(isOn: item.isOn, dimmed: !clickable)
-                    .padding(.top, 2)
+                Spacer(minLength: 0)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle())
+        .buttonStyle(RowButtonStyle(isOn: item.isOn))
         .disabled(!clickable)
         .help(locked ? (item.lockReason ?? "") : (item.isOn ? "点击关掉这块屏" : "点击打开这块屏"))
         .accessibilityLabel("\(item.label),\(item.isOn ? "已打开" : "已关闭")")
@@ -140,51 +139,33 @@ private struct DisplayRow: View {
     }
 }
 
-/// 开关的样子,只用来显示状态(整行才是点击区域)。外形与系统开关一致:开为强调色,关为灰。
-private struct SwitchIndicator: View {
-    let isOn: Bool
-    let dimmed: Bool
-
-    var body: some View {
-        ZStack(alignment: isOn ? .trailing : .leading) {
-            Capsule()
-                .fill(isOn ? Color.accentColor : Color(nsColor: .tertiaryLabelColor).opacity(0.35))
-            Circle()
-                .fill(Color.white)
-                .shadow(color: .black.opacity(0.18), radius: 0.8, y: 0.5)
-                .padding(2)
-        }
-        .frame(width: 38, height: 22)
-        .opacity(dimmed ? 0.45 : 1)
-        .animation(.easeOut(duration: 0.15), value: isOn)
-    }
-}
-
-/// 卡片底色;鼠标悬停时加深一点,按下时再深一点——让人看出整行可以点。
+/// 行的底色即开关状态:开着浅蓝底(系统强调色调淡)、关着普通底。
+/// 鼠标悬停时加深一点、按下时再深一点,让人看出整行可以点;锁住的行没有悬停反馈。
 private struct RowButtonStyle: ButtonStyle {
+    let isOn: Bool
+
     func makeBody(configuration: Configuration) -> some View {
-        RowBody(configuration: configuration)
+        RowBody(configuration: configuration, isOn: isOn)
     }
 
     private struct RowBody: View {
         let configuration: ButtonStyle.Configuration
+        let isOn: Bool
         @Environment(\.isEnabled) private var isEnabled
         @State private var hovering = false
 
         var body: some View {
+            let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+            // 直接取系统强调色:SwiftUI 的 accentColor 在按钮被禁用时会自动变灰,
+            // 锁住的行(亮着但不能关)就会看不出「开着」(实测)。
+            let accent = Color(nsColor: .controlAccentColor)
             configuration.label
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(!isEnabled ? 0 : configuration.isPressed ? 0.09 : hovering ? 0.045 : 0))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
-                )
+                .background(shape.fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(shape.fill(accent.opacity(isOn ? 0.14 : 0)))
+                .overlay(shape.fill(Color.primary.opacity(!isEnabled ? 0 : configuration.isPressed ? 0.08 : hovering ? 0.04 : 0)))
+                .overlay(shape.strokeBorder(isOn ? accent.opacity(0.35) : Color(nsColor: .separatorColor),
+                                            lineWidth: isOn ? 1 : 0.5))
+                .animation(.easeOut(duration: 0.15), value: isOn)
                 .onHover { hovering = $0 }
         }
     }
