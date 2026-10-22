@@ -1,6 +1,6 @@
 - [设计文档的非目标是刻意决策](design-doc-non-goals-are-deliberate.md) — 代码里看似的缺口多半是有意为之,动手前读 §3 和 §7 全文
 - [真实动线:接坞办公、拔坞走人](displayswitch-real-usage-dock-workflow.md) — 拔插是日常而非边缘;另有 HDMI / 电源 / 键盘分开接的场景,两种接法都要验收
-- [发 release 必须先真机验收](release-needs-real-machine-acceptance.md) — commit/tag 随时,release 是对外承诺,别当成完成的仪式
+- [发 release 必须先真机验收](release-needs-real-machine-acceptance.md) — 界面 / 文案类改动要等他说「没问题」才发;commit/tag 随时,release 是对外承诺
 - [两次内核崩溃是雷雳显示驱动卡死](panic-thunderbolt-dp-wedge-not-displayswitch.md) — 9/29 已排除本 app、9/22 未能完全排除;再遇崩溃先按其中特征与核查法判定
 - [显示器睡眠中救援会忙等](rescue-during-display-sleep-spins.md) — 硬试会在主线程卡约 10 秒并失败;v1.0.15 改为等唤醒,已真机验收并发版
 - [显示故障先恢复再汇报(本项目落法)](restore-visibility-before-reporting.md) — 通用规矩在全局 CLAUDE.md;这里记残影屏怎么恢复、拔插前先查卡死

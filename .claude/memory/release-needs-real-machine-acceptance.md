@@ -1,6 +1,6 @@
 ---
 name: release-needs-real-machine-acceptance
-description: DisplaySwitch 发 release 必须先真机验收;commit/push 随时做,tag 可多打,但 release 是对外承诺
+description: DisplaySwitch 发 release 必须先真机验收,且界面 / 文案 / 交互类改动要等他明确说「没问题」才发;commit/push 随时做,tag 可多打
 metadata:
   type: feedback
 ---
@@ -19,3 +19,9 @@ DisplaySwitch 的三层动作门槛不同:**commit + push** 随时做(工作记�
 **How to apply:** 发 release 前先问一句——**这个版本我是否已经在真机、按他的真实动线验证过?**
 没有就只 commit。修 bug 尤其要守:「我以为修好了」和「真的修好了」之间可能隔着好几个版本。
 参见 [[displayswitch-real-usage-dock-workflow]](按那条动线验收)。
+
+**2026-10-22 补:「真机验收通过」要由他说,不由我判。** v1.0.17(菜单改成弹出面板)我请他配合点了几步、
+自己截图看过,就判定通过、直接发了 release;他原话:「你没等我确认没问题你就打包推送生产了」。
+发布后他用了才发现首次点击开关没反应、锁住原因文案含义不对——**这正是只有他用了才知道的东西**。
+**How to apply(补):** 凡他会直接看到、用到的改动(界面、文案、交互),发 release 前必须等他一句明确的
+「没问题 / 可以发」;我自己的截图核验只是发给他验收之前的前置检查。commit / push / tag 照旧随时。
