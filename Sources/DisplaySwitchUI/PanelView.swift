@@ -6,7 +6,7 @@ import DisplaySwitchCore
 ///
 /// 视觉取法 macOS 27 自己的菜单栏面板:底是系统材质(见 `PanelBackground`);行没有底色与描边,
 /// 开关状态由行首的圆形图标表达——开着是强调色实心圆、白色图形,关着是浅灰圆(同控制中心的
-/// Wi-Fi、蓝牙);鼠标经过时整行是系统菜单那样的强调色选中底,文字与图标转白(见 `SelectionBackground`)。
+/// Wi-Fi、蓝牙);鼠标经过时整行一层浅灰圆角底,图标与文字不变——照抄菜单栏 Wi-Fi 菜单(见 `HoverBackground`)。
 /// 不用鼠标悬停提示(他认为低级):需要说明的话直接写在顶部的提示区。
 ///
 /// **布局在交互中保持不动**:每行高度固定;锁住原因写在顶部提示区(他的设计),
@@ -32,10 +32,10 @@ public struct PanelView: View {
                     DisplayRow(item: item, supported: model.supported, lockedTaps: model.lockedTaps) { model.toggle(item.id) }
                 }
             }
-            // 行与面板边缘的间距照系统菜单选中底的实测值(5pt,macOS 27)。
-            .padding(.horizontal, 5)
+            // 行与面板边缘的间距照 Wi-Fi 菜单悬停底的实测值(7pt,macOS 27)。
+            .padding(.horizontal, 7)
             .padding(.bottom, 5)
-            Divider()
+            Divider().padding(.horizontal, 14)          // 分隔线两头缩进,同 Wi-Fi 菜单
             statusBar
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -78,8 +78,8 @@ public struct PanelView: View {
             .padding(.horizontal, 14).padding(.bottom, 8)
     }
 
-    /// 底部状态栏(取法 WhatCable 的底栏,他的建议):一行小字,左边开发者工具,右边版本与退出。
-    /// 「全黑救援已就绪」曾常驻这里,他指出会误导:普通使用用不着知道它,挪进开发者工具。
+    /// 底部状态栏(取法 WhatCable 的底栏,他的建议):一行小字,左边显示驱动状态(点开是开发者工具),
+    /// 右边版本与退出。「全黑救援已就绪」曾常驻这里,他指出会误导:普通使用用不着知道它,挪进开发者工具。
     private var statusBar: some View {
         HStack(spacing: 6) {
             DeveloperMenu(model: model)
@@ -97,13 +97,19 @@ public struct PanelView: View {
     }
 }
 
-/// 开发者工具:点图标弹出系统菜单,开发、排查用的东西都在这里,平时不占面板地方。
-/// 菜单里的条目是固定的几项,不随记录增多而变长;日志文件本身也有上限(见 `RescueLog`)。
+/// 开发者工具:状态栏左边那一组(工具图标 + 显示驱动状态),点开是系统菜单,
+/// 开发、排查用的东西都在这里,平时不占面板地方。菜单里的条目是固定的几项,不随记录增多而变长;
+/// 日志文件本身也有上限(见 `RescueLog`)。
 private struct DeveloperMenu: View {
     @ObservedObject var model: PanelModel
 
     var body: some View {
         Menu {
+            Section("显示驱动") {
+                ForEach(driverStatusDetails(model.driverHealth), id: \.self) { Text($0) }
+                if let at = model.driverCheckedAt { Text("上次检查：\(Self.relative(at, seconds: true))") }
+                Button("重新检查") { model.refreshDriverHealth(force: true) }
+            }
             Section("全黑救援（拔线导致没有一块屏亮着时，自动点亮）") {
                 Text(model.supported ? "状态：已就绪" : "状态：不可用，此设备不支持开关显示器")
                 Text(model.lastRescue.map { "上次触发：\(Self.relative($0))" } ?? "上次触发：从未")
@@ -112,23 +118,47 @@ private struct DeveloperMenu: View {
             Button("打开救援日志", action: model.openRescueLog)
             Button("复制诊断信息", action: model.copyDiagnostics)
         } label: {
-            // 与状态栏的小字同大小、同颜色:这是给开发、排查用的入口,不该比别的东西显眼。
-            Image(systemName: "wrench.and.screwdriver")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
+            // 与状态栏的小字同大小、同颜色:这是给开发、排查用的入口,不该比别的东西显眼;
+            // 只有驱动出问题时,圆点与文字变橙色。
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver")
+                Circle().fill(statusColor).frame(width: 6, height: 6)
+                ZStack(alignment: .leading) {
+                    ForEach(driverStatusLabels, id: \.self) { Text($0).hidden() }   // 按最长的一句预留宽度
+                    Text(driverStatusLabel(model.driverHealth)).foregroundStyle(problem ? Color(nsColor: .systemOrange) : .secondary)
+                }
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel("开发者工具")
+        .accessibilityLabel("开发者工具，\(driverStatusLabel(model.driverHealth))")
+    }
+
+    private var problem: Bool {
+        switch model.driverHealth {
+        case .wedged, .ghostScreens: true
+        default: false
+        }
+    }
+
+    private var statusColor: Color {
+        switch model.driverHealth {
+        case .normal: Color(nsColor: .systemGreen)
+        case .wedged, .ghostScreens: Color(nsColor: .systemOrange)
+        case .checking, .unknown: Color(nsColor: .tertiaryLabelColor)
+        }
     }
 
     /// 今天的只写时刻,更早的带上日期。
-    private static func relative(_ date: Date) -> String {
+    private static func relative(_ date: Date, seconds: Bool = false) -> String {
         let f = DateFormatter()
-        f.dateFormat = Calendar.current.isDateInToday(date) ? "今天 HH:mm" : "M 月 d 日 HH:mm"
+        let time = seconds ? "HH:mm:ss" : "HH:mm"
+        f.dateFormat = Calendar.current.isDateInToday(date) ? "今天 \(time)" : "M 月 d 日 \(time)"
         return f.string(from: date)
     }
 }
@@ -136,7 +166,7 @@ private struct DeveloperMenu: View {
 /// 一块屏一行,**整行就是开关**:点一下就切换,没有任何开关控件(他的要求)。
 /// 状态由行首圆形图标表达,关着时文字变淡并写「已关闭」——不只靠颜色。
 /// 被锁住时行尾一把小锁,原因写在顶部提示区;这一行切不了,但点了要有反应:锁与顶部提示一起抖一下
-/// (他的要求)。所以它不设成不可点,只是鼠标经过时不给选中底——选中底表示「点了会切换」。
+/// (他的要求)。所以它不设成不可点,只是鼠标经过时不给悬停底——悬停底表示「点了会切换」。
 private struct DisplayRow: View {
     let item: DisplayMenuItem
     let supported: Bool
@@ -152,41 +182,40 @@ private struct DisplayRow: View {
 
     var body: some View {
         Button(action: toggle) {
-            HStack(spacing: 10) {
-                StatusIcon(symbol: item.isBuiltin ? "laptopcomputer" : "display", isOn: item.isOn, highlighted: highlighted)
+            HStack(spacing: 12) {
+                StatusIcon(symbol: item.isBuiltin ? "laptopcomputer" : "display", isOn: item.isOn)
                 VStack(alignment: .leading, spacing: 2) {
                     // 隐藏的那句是这一行可能出现的最长写法,只占宽度不显示,见 `DisplayMenuItem.sizingLabel`。
                     ZStack(alignment: .leading) {
                         Text(item.sizingLabel).hidden()
                         Text(item.label)
-                            .foregroundStyle(highlighted ? Self.selectedText : item.isOn ? .primary : .secondary)
+                            .foregroundStyle(item.isOn ? .primary : .secondary)
                     }
                     .font(.system(size: 13, weight: .medium))
                     ZStack(alignment: .leading) {
                         Text(item.sizingDetail).hidden()
                         Text(item.detail)
-                            .foregroundStyle(highlighted ? AnyShapeStyle(Self.selectedText.opacity(0.8))
-                                         : item.isOn ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                            .foregroundStyle(item.isOn ? .secondary : .tertiary)
                     }
                     .font(.system(size: 11))
                 }
                 .lineLimit(1)
                 Spacer(minLength: 12)
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                     .animatingOnly(.easeInOut(duration: 0.2)) { $0.opacity(locked ? 1 : 0) }
                     .shakes(on: lockedTaps)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 7)
             .frame(height: 46)
             .contentShape(Rectangle())
-            .background { if highlighted { SelectionBackground() } }
+            .background { if highlighted { HoverBackground() } }
         }
         .buttonStyle(RowButtonStyle())
         .disabled(!supported)
         .onHover { inside in
-            // 选中底跟系统菜单一样即时出现、即时消失,不带渐变:行首图标的颜色动画只给开关用。
+            // 悬停底跟 Wi-Fi 菜单一样即时出现、即时消失,不带渐变。
             var instant = Transaction()
             instant.disablesAnimations = true
             withTransaction(instant) { hovering = inside }
@@ -194,48 +223,42 @@ private struct DisplayRow: View {
         .accessibilityLabel("\(item.label),\(item.isOn ? "已打开" : "已关闭")")
         .accessibilityHint(clickable ? (item.isOn ? "点击关掉" : "点击打开") : (item.lockReason ?? ""))
     }
-
-    /// 选中底上的文字色,用系统给菜单选中项定的那个。
-    static let selectedText = Color(nsColor: .selectedMenuItemTextColor)
 }
 
-/// 行首的圆形状态图标(取法控制中心):开着为强调色实心圆 + 白色图形,关着为浅灰圆 + 灰色图形。
-/// 行被选中(蓝底)时反过来:开着是白色实心圆 + 强调色图形,关着是半透明白圆 + 白色图形——
-/// 不然开着的蓝圆落在蓝底上就看不见了(系统菜单里的图标在选中时同样转白)。
+/// 行首的圆形状态图标,同 Wi-Fi 菜单:开着为强调色实心圆 + 白色图形,关着为浅灰圆 + 灰色图形;直径 26pt(实测)。
 /// 开关时的动画**只作用在颜色与透明度上**,原地渐变,见 `animatingOnly`。
 private struct StatusIcon: View {
     let symbol: String
     let isOn: Bool
-    let highlighted: Bool
-
-    private static let accent = Color(nsColor: .controlAccentColor)
 
     var body: some View {
         ZStack {
             Circle()
-                .fill(highlighted ? DisplayRow.selectedText.opacity(0.25) : Color.primary.opacity(0.08))
+                .fill(Color.primary.opacity(0.08))
             Circle()
-                .fill(highlighted ? DisplayRow.selectedText : Self.accent)
+                .fill(Color(nsColor: .controlAccentColor))
                 .animatingOnly(.easeInOut(duration: 0.2)) { $0.opacity(isOn ? 1 : 0) }
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
-                .animatingOnly(.easeInOut(duration: 0.2)) {
-                    $0.foregroundStyle(highlighted ? (isOn ? Self.accent : DisplayRow.selectedText)
-                                                   : (isOn ? Color.white : Color.secondary))
-                }
+                .animatingOnly(.easeInOut(duration: 0.2)) { $0.foregroundStyle(isOn ? Color.white : Color.secondary) }
         }
-        .frame(width: 28, height: 28)
+        .frame(width: 26, height: 26)
     }
 }
 
-/// 鼠标经过时的整行底,照系统菜单的选中项:强调色实心圆角块,离面板边缘 5pt、圆角 5pt(macOS 27 实测)。
-/// 颜色直接用系统强调色(随「系统设置 › 外观」里选的强调色变):同一块屏上,系统菜单选中底与面板里
-/// 强调色实心圆的像素一模一样(55, 123, 249)。试过 SDK 推荐的「选中」材质,它在玻璃里是半透明的,
-/// 渲染成发白的 (107, 160, 250),比系统菜单浅一截。
-private struct SelectionBackground: View {
+/// 鼠标经过时的整行底,照抄菜单栏 Wi-Fi 菜单(macOS 27 实测,他把 Wi-Fi 图标放出来让我对照):
+/// 浅灰圆角块,离面板边缘 7pt、圆角约 11pt,图标与文字不变。颜色是系统填充色 `secondarySystemFill`——
+/// 实测 Wi-Fi 菜单悬停时底色从 (251, 251, 255) 变 (231, 231, 235),正是叠了一层 8% 的黑。
+/// 走过的弯:先是一层 6% 的灰(他:「不明显」),再是系统文字菜单的强调色蓝底(他:「太怪异」)。
+private struct HoverBackground: View {
     var body: some View {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(Color(nsColor: .controlAccentColor))
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .fill(Self.fill)
+    }
+
+    private static var fill: Color {
+        if #available(macOS 14.0, *) { return Color(nsColor: .secondarySystemFill) }
+        return Color.primary.opacity(0.08)       // macOS 13 没有系统填充色;主色随深浅模式变
     }
 }
 

@@ -158,6 +158,16 @@ public final class DisplayController {
     /// 曾按「内建屏被关」另给一句「先打开它才能关这块」,他指出含义不对:规则是保底,不是开内建屏的前提。
     private var lockReason: String { lockReasonText }
 
+    /// 残影屏块数:在线的外接屏比物理连着的多出来的块数;查不到物理连接时为 0,不猜。
+    /// 雷雳显示驱动卡死后拔坞,拆不掉已拔走的屏,系统仍当它们在线(2026-10-22 实测:物理 0、在线 2)。
+    /// 被本 app 关掉的屏物理上还连着、只是不在线,不会被算进来。
+    /// 注意:插回时在线数会比物理数早约 1 秒恢复,判残影要隔几秒复核(调用方负责)。
+    public func ghostScreenCount() -> Int {
+        guard let physical = service.liveExternalCount() else { return 0 }
+        let activeExternal = service.activeDisplays().filter { !$0.isBuiltin }.count
+        return max(0, activeExternal - physical)
+    }
+
     @discardableResult
     public func toggle(id: CGDirectDisplayID) -> Bool {
         // 私有符号缺失:开关不可用,直接拒绝(恢复走 restoreAll/启动兜底,不受此限)。

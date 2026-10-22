@@ -99,6 +99,7 @@ final class StatusPanelController: NSObject {
     func showPanel() {
         // 每次打开都重新读系统真相(面板开着时另由屏幕参数变化通知刷新)。
         model.reload()
+        model.refreshDriverHealth()
         isOpen = true
         if !panel.isVisible { panel.alphaValue = 0 }
         placePanel()        // 贴到图标下并渐显

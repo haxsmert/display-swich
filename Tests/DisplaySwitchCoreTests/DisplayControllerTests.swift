@@ -1067,3 +1067,57 @@ func logTrimming() {
     #expect(text.hasSuffix("第 100 行\n"))                        // 最新的都在
     #expect(text.hasPrefix("第 "))                                // 不留半行
 }
+
+// MARK: - 显示驱动状态
+
+@Test("显示驱动状态:卡死看系统日志,残影看在线屏比物理连接多;都没有才算正常")
+func driverHealthAssessment() {
+    #expect(assessDriverHealth(wedgeLogLines: 0, ghostScreens: 0) == .normal)
+    // 10-22 实测:卡死时任意 2 分钟约 1200 条,健康的 3 小时 0 条——出现就算,不拍阈值
+    #expect(assessDriverHealth(wedgeLogLines: 1189, ghostScreens: 0) == .wedged(logLines: 1189))
+    #expect(assessDriverHealth(wedgeLogLines: 1, ghostScreens: 0) == .wedged(logLines: 1))
+    // 拔坞后的残影屏:卡死的后果,日志若已轮换也要报
+    #expect(assessDriverHealth(wedgeLogLines: 0, ghostScreens: 2) == .ghostScreens(2))
+    // 两样都有:报卡死(根因),残影是它的后果
+    #expect(assessDriverHealth(wedgeLogLines: 30, ghostScreens: 2) == .wedged(logLines: 30))
+    // 读不到日志:只能凭残影判断;没有残影也不能说正常
+    #expect(assessDriverHealth(wedgeLogLines: nil, ghostScreens: 0) == .unknown)
+    #expect(assessDriverHealth(wedgeLogLines: nil, ghostScreens: 1) == .ghostScreens(1))
+}
+
+@Test("显示驱动状态的文字:状态栏一句短的,详情写依据与该怎么办")
+func driverHealthTexts() {
+    #expect(driverStatusLabel(.normal) == "显示驱动正常")
+    #expect(driverStatusLabel(.wedged(logLines: 5)) == "显示驱动卡死")
+    #expect(driverStatusLabel(.ghostScreens(2)) == "显示驱动异常")
+    // 状态栏按最长的一句预留宽度:每一句都得在候选里
+    for h in [DriverHealth.checking, .normal, .wedged(logLines: 1), .ghostScreens(1), .unknown] {
+        #expect(driverStatusLabels.contains(driverStatusLabel(h)))
+        #expect(!driverStatusDetails(h).isEmpty)
+    }
+    #expect(driverStatusDetails(.ghostScreens(2)).joined().contains("2 块"))
+    #expect(driverStatusDetails(.wedged(logLines: 1189)).joined().contains("1189"))
+}
+
+@Test("残影屏计数:在线外接屏比物理连接多出来的块数;宁可漏报,不能误报")
+func ghostScreenCounting() {
+    // 10-22 真实发生的形态:内建屏被本 app 关着,驱动卡死后拔坞,两块外接屏都成了残影(物理 0、在线 2)
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.ghostScreenCount() == 0)
+    _ = ctrl.toggle(id: 1)
+    svc.unplugAsSeenAtNotificationTime(4); svc.unplugAsSeenAtNotificationTime(5)
+    #expect(ctrl.ghostScreenCount() == 2)
+    svc.liveQueryFails = true                       // 查不到物理连接:不猜
+    #expect(ctrl.ghostScreenCount() == 0)
+
+    // 本 app 关掉的外接屏:物理连接还在、只是不在线。它可能还插着,也可能已被拔走,系统分不出是哪块,
+    // 所以不能拿它去抵扣——抵扣了,它被拔走时就会把健康的状态误报成残影。代价是下面这种混合情况数不出来。
+    let mix = MockService(all: [makeInfo(id: 4, x: 0), makeInfo(id: 5, x: 1920), makeInfo(id: 6, x: 3840)])
+    let mixCtrl = DisplayController(service: mix)
+    _ = mixCtrl.toggle(id: 4)                       // 关掉一块(线还插着)
+    #expect(mixCtrl.ghostScreenCount() == 0)
+    mix.unplug(4)                                   // 健康地拔掉这块关着的屏:不是残影
+    #expect(mixCtrl.ghostScreenCount() == 0)
+}

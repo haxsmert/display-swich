@@ -11,6 +11,11 @@ public final class PanelModel: ObservableObject {
     /// 点了被锁住那一行的次数。每多一次,界面就让锁形图标与顶部提示抖一下:
     /// 锁住后再点要有反应(他的要求),否则看上去像点了没反应。
     @Published public private(set) var lockedTaps = 0
+    /// 显示驱动是否正常(见 `DriverHealth`),状态栏显示。
+    @Published public private(set) var driverHealth: DriverHealth = .checking
+    /// 最近一次检查完的时间,开发者工具里显示。
+    @Published public private(set) var driverCheckedAt: Date?
+    private var checkingDriver = false
     @Published public private(set) var supported = true
     @Published public private(set) var lastRescue: Date?
 
@@ -20,16 +25,23 @@ public final class PanelModel: ObservableObject {
     private var screenObserver: NSObjectProtocol?
 
     /// `lastRescueProvider` 与 `version` 默认读真实日志与 app 版本;截图工具传固定值,画面才可复现。
+    /// `driverHealth` 是检查完成前显示的状态:app 里是「正在检查」;截图工具不读系统日志,直接给定。
     public init(controller: DisplayController,
                 lastRescueProvider: @escaping () -> Date? = RescueLog.lastRescueDate,
-                version: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) {
+                version: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                driverHealth: DriverHealth = .checking) {
+        self.driverHealth = driverHealth
         self.controller = controller
         self.lastRescueProvider = lastRescueProvider
         self.bundleVersion = version
         // 屏幕增减、开关、改分辨率时系统都会发这条通知;面板开着时据此刷新,不轮询。
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.reload() }
+        ) { [weak self] _ in
+            self?.reload()
+            // 屏幕增减(拔插坞)正是残影屏会出现的时刻,立刻重查,不受「刚查过」的限制。
+            self?.refreshDriverHealth(force: true)
+        }
         reload()
     }
 
@@ -42,6 +54,28 @@ public final class PanelModel: ObservableObject {
         hint = panelHint(items)
         supported = controller.isSupported
         lastRescue = lastRescueProvider()
+    }
+
+    /// 重新检查显示驱动。读系统日志约 1 秒,放在后台;结果回到主线程再改状态。
+    /// 打开面板时调用;15 秒内刚查过就不重复读日志(`force` 时例外)。
+    public func refreshDriverHealth(force: Bool = false) {
+        guard !checkingDriver else { return }
+        if !force, let last = driverCheckedAt, Date().timeIntervalSince(last) < 15 { return }
+        checkingDriver = true
+        let firstGhosts = controller.ghostScreenCount()
+        let started = Date()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let wedgeLines = DriverLog.recentWedgeLines()
+            // 残影要复核:插回坞时在线数会比物理数早约 1 秒恢复(实测),隔 3 秒再看,两次都有才算。
+            let wait = firstGhosts > 0 ? max(0, 3 - Date().timeIntervalSince(started)) : 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+                guard let self else { return }
+                let ghosts = firstGhosts > 0 ? min(firstGhosts, self.controller.ghostScreenCount()) : 0
+                self.driverHealth = assessDriverHealth(wedgeLogLines: wedgeLines, ghostScreens: ghosts)
+                self.driverCheckedAt = Date()
+                self.checkingDriver = false
+            }
+        }
     }
 
     /// 切换一块屏:开着就关、关着就开。**方向不由界面给**——由 Core 按系统真实状态当场决定。
