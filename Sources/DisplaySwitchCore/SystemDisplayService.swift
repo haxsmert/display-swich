@@ -55,6 +55,9 @@ public protocol SystemDisplayService {
     /// `nil` = 查询失败。
     func liveExternalPorts() -> [String]?
 
+    /// 某块屏当前的显示模式;屏没点亮或查不到时返回 nil。只用于面板显示。
+    func currentMode(_ id: CGDirectDisplayID) -> DisplayMode?
+
     /// 注册「显示器被物理拔掉」的**内核事件**监听(IOKit 服务终止通知),用于全黑救援。
     ///
     /// 为什么不用 CoreGraphics 的 `CGDisplayRegisterReconfigurationCallback`:

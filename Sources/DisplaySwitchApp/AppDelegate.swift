@@ -1,11 +1,12 @@
 import AppKit
 import CoreGraphics
 import DisplaySwitchCore
+import DisplaySwitchUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let service = CGDisplayService()
     private lazy var controller = DisplayController(service: service)
-    private var menuController: StatusMenuController?
+    private var panelController: StatusPanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // 只在菜单栏,不进 Dock
@@ -23,7 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             RescueLog.write("启动兜底:点亮了 \(revived) 块上次遗留的关闭屏")
         }
 
-        menuController = StatusMenuController(controller: controller)
+        panelController = StatusPanelController(controller: controller)
+        // `--show-panel`:启动后直接打开面板(验收截图用;日常从菜单栏图标打开)。
+        if CommandLine.arguments.contains("--show-panel") { panelController?.showPanelWhenReady() }
 
         // ——— 全黑救援的两个触发源,缺一不可 ———
         //
@@ -87,36 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.attemptRescue(trigger: trigger, attemptsLeft: attemptsLeft - 1)
-        }
-    }
-}
-
-/// 救援路径的诊断日志。
-///
-/// 为什么非要有:全黑时用户看不到任何界面,菜单栏也点不开——救援若失败,现场随强制重启一起消失,
-/// 事后无从判断「通知到底到没到、判据是多少、恢复调用成没成」。日志是这条路径唯一的黑匣子。
-/// 2026-09-18 的事故能在几分钟内定位到确切环节,全靠它。只在救援相关事件发生时写,平时不产生一个字节。
-enum RescueLog {
-    private static let url = FileManager.default
-        .homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Logs/DisplaySwitch.log")
-
-    /// 与**上一条**完全相同的消息不重复写。
-    /// 事件源天然会重复派发(一次拔线实测来 6 条终止通知),状态没变时消息也一字不差——
-    /// 重复记录只会把真正的现场淹没。只比上一条,所以状态变过又变回来仍会重新记录。
-    private static var lastMessage: String?
-
-    static func write(_ message: String) {
-        guard message != lastMessage else { return }
-        lastMessage = message
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        guard let data = "[\(stamp)] \(message)\n".data(using: .utf8) else { return }
-        if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: url)
         }
     }
 }

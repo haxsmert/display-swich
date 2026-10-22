@@ -56,18 +56,31 @@ Mac 外接双显示器场景下,希望用一个**极简**的菜单栏小工具,*
 
 ## 4. 架构总览
 
-一个 macOS 菜单栏常驻应用(`LSUIElement = true`,无 Dock 图标、无主窗口),Swift + AppKit,**零第三方依赖**。
+一个 macOS 菜单栏常驻应用(`LSUIElement = true`,无 Dock 图标、无主窗口),Swift + AppKit + SwiftUI,**零第三方依赖**。
 
-交互:点菜单栏图标 → 弹出菜单,动态列出当前**所有**显示器(含内建),每块一行带勾选(✓ = 当前开启);点某行即切换该屏开/关;只剩最后一块活跃屏时该行灰显不可关;菜单底部「退出」。
+交互(v1.0.17 起):点菜单栏图标 → 弹出面板(点面板外自动收起)。顶部一句摘要(「3 块屏 · 2 块亮着」);
+每块屏一张卡片(含内建):名称、说明行(内建 / 外接 · 接法 · 分辨率与刷新率,关着时写「已关闭」)、右侧开关;
+开关被锁住时卡片里直接写原因;底部是全黑救援状态(点开救援日志)、版本号(点开仓库)、「退出」。
+版式借鉴 MonitorBar;配色跟随系统外观、只用系统语义色(浅色、实底,不做透明)。
+v1.0.16 及以前是原生 `NSMenu`,每块一行带勾选。
 
 | 模块 | 职责 | 依赖 |
 |---|---|---|
-| `DisplayInfo` | 值类型:`id` / `uuid` / 名称 / `bounds` / `isMain` / `isBuiltin` / `isActive` | 无 |
-| `DisplayController` | 枚举所有屏、系统名+(主)命名、执行开/关、「至少留一块活跃屏」保护判定、维护已关闭屏快照 | CoreGraphics(私有符号薄封装) |
-| `StatusMenuController` | 管理 `NSStatusItem`,把 `DisplayController` 状态渲染成菜单项,处理点击与刷新 | AppKit、`DisplayController` |
-| `AppDelegate` | 启动装配(启动即恢复一遍作兜底)、退出时恢复全部、热插拔时刷新菜单 | AppKit |
+| `DisplayInfo` / `DisplayMode` | 值类型:屏的快照;当前模式(像素尺寸、刷新率) | 无 |
+| `DisplayController` | 枚举所有屏、命名、执行开/关、保护判定、维护已关闭屏快照;**算好面板上的每一行字**(说明行、锁住原因) | `SystemDisplayService` |
+| `PanelText` | 纯函数:接口路径 → 接法、模式 → 文字、顶部摘要 | 无 |
+| `CGDisplayService` | `SystemDisplayService` 的真实实现:CoreGraphics、私有符号、IOKit | 系统 |
+| `DisplaySwitchUI`:`PanelModel` / `PanelView` | 面板的数据源与视图;只摆放 Core 给的字,不自己拼 | SwiftUI、Core |
+| `StatusPanelController` | 管理 `NSStatusItem` 与弹出面板 | AppKit、UI |
+| `AppDelegate` | 启动装配(启动即点亮遗留关闭屏)、退出时恢复全部、挂两个救援触发源 | AppKit |
+| `PanelSnapshots` | 用演示数据渲染真实面板视图,生成 README 截图(`scripts/snapshots.sh`) | UI、Core |
 
-边界:`DisplayController` 不碰 UI;`StatusMenuController` 只读 `DisplayController` 暴露的状态与方法,不直接调系统显示 API。开关逻辑可在不起 UI 下单测。
+边界:`DisplayController` 不碰 UI;UI 只读它暴露的状态与方法,不直接调系统显示 API。
+开关逻辑与面板文字都能在不起 UI 的情况下单测。
+
+**说明行的接法只在「所有外接屏接法一致」时才写**:系统没有给出「哪块屏走哪个接口」的可靠对应——
+同型号两块屏的 EDID 头部序列号相同(实测都是 19),按它对应会张冠李戴;接法唯一时每块必然都是这种接法。
+「雷雳」只表示走雷雳 / USB4 隧道(拓展坞、直连雷雳显示器都是这个形态),所以不写成「拓展坞」。
 
 ## 5. 显示器开/关机制
 
@@ -370,7 +383,7 @@ v1.0.6 是从不触发的死代码、v1.0.9 引入了比原 bug 更隐蔽的回�
 | 关到 0 块活跃屏(无恢复路径) | `canDisable` 机型感知:无内建屏机器须留 ≥1 活跃屏;有内建屏机器允许关到全黑(开盖恢复),但内建屏已被软件关掉/target 本身是内建屏时禁止 → 纯软件不会陷入无法恢复的全黑 |
 | **死锁:软件关内建 + 物理拔光外接 → 持续全黑** | 纯软件路径已被 §7.1 堵死;仅余物理拔屏边界 → **强制重启即恢复(`.forAppOnly` 回滚 + 永不自启);软件自动恢复已证伪,不做** |
 | 「有无内建屏」检测不准 | `hasBuiltInDisplay`:在线列表 + 内建电池代理;不确定时保守按「无内建屏」(更安全,宁可禁止全关) |
-| 显示器热插拔导致菜单状态过期 | 菜单弹出时(`menuNeedsUpdate`)重新枚举重建 |
+| 显示器热插拔导致面板状态过期 | 面板每次弹出时重新枚举;开着时收到系统的屏幕参数变化通知即刷新(不轮询) |
 | `displayID` 随重连变化 | 持久标识用 UUID,不用 `displayID` |
 
 ## 11. 未来可扩展（均为本期非目标）

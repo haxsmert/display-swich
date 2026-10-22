@@ -110,6 +110,12 @@ public final class CGDisplayService: SystemDisplayService {
         return ports.sorted()
     }
 
+    /// 见协议注释。像素尺寸取真实像素(HiDPI 下 1920×1080 的界面是 3840×2160 像素)。
+    public func currentMode(_ id: CGDirectDisplayID) -> DisplayMode? {
+        guard CGDisplayIsActive(id) != 0, let mode = CGDisplayCopyDisplayMode(id) else { return nil }
+        return DisplayMode(pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight, refreshRate: mode.refreshRate)
+    }
+
     private static func properties(of service: io_object_t) -> [String: Any] {
         var unmanaged: Unmanaged<CFMutableDictionary>?
         guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,

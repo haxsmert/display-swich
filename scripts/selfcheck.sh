@@ -64,7 +64,7 @@ check("CGSGetDisplayList 能枚举被禁用的屏", inactive != nil, "未点亮 
 let ctrl = DisplayController(service: svc)
 let items = ctrl.menuItems()
 check("菜单能渲染", !items.isEmpty, "\(items.count) 项")
-for i in items { print("       \(i.isOn ? "✓" : " ") \(i.label)") }
+for i in items { print("       \(i.isOn ? "✓" : " ") \(i.label)  — \(i.detail)\(i.lockReason.map { "  [锁住:\($0)]" } ?? "")") }
 check("无关闭记录时不误救援", ctrl.needsBlackoutRescue() == false)
 
 // 可选的动手检查(bash scripts/selfcheck.sh --plug):拔线通知依赖系统驱动的内部行为——

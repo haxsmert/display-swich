@@ -6,6 +6,11 @@ public struct DisplayMenuItem: Equatable, Sendable {
     public let label: String
     public let isOn: Bool
     public let canToggleOff: Bool
+    public let isBuiltin: Bool
+    /// 说明行,如「外接 · 雷雳 · 3840×2160 · 60Hz」「内建 · 已关闭」。
+    public let detail: String
+    /// 开关被锁住(亮着却不能关)时的原因;能关、或本来就关着时为 nil。
+    public let lockReason: String?
 }
 
 /// 需要救援、但此刻下指令注定失败时,在等什么。
@@ -95,11 +100,37 @@ public final class DisplayController {
         // 整组(活跃+已关闭)一起算标签:同名屏按 UUID 稳定编号,关掉其一不丢号、重开不漂移。
         let labels = displayLabels(for: ordered)
         let fallback = builtInFallbackAvailable()
+        let link = sharedLinkLabel(service.liveExternalPorts())
         return ordered.map { d in
             let on = disabled[d.id] == nil
             let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
-            return DisplayMenuItem(id: d.id, label: labels[d.id] ?? displayLabel(for: d), isOn: on, canToggleOff: canOff)
+            return DisplayMenuItem(id: d.id, label: labels[d.id] ?? displayLabel(for: d), isOn: on, canToggleOff: canOff,
+                                   isBuiltin: d.isBuiltin, detail: detailLine(for: d, isOn: on, link: link),
+                                   lockReason: (service.isSupported && on && !canOff) ? lockReason(for: d) : nil)
         }
+    }
+
+    /// 说明行:内建 / 外接 → 接法(仅外接、且所有外接屏接法一致时)→ 分辨率与刷新率(亮着时)或「已关闭」。
+    private func detailLine(for d: DisplayInfo, isOn: Bool, link: String?) -> String {
+        var parts = [d.isBuiltin ? "内建" : "外接"]
+        if !d.isBuiltin, let link { parts.append(link) }
+        if !isOn {
+            parts.append("已关闭")
+        } else if let mode = service.currentMode(d.id) {
+            parts.append(modeText(mode))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 亮着却不能关时,说清为什么。只在 `canDisable` 判否时调用——它判否只有一种情形:
+    /// 关掉后一块亮着的屏都不剩,且没有「可开盖恢复的内建屏」兜底。
+    /// 兜底缺失若是因为内建屏被本 app 关了,就告诉他能做什么(先开内建屏),而不只是说不行。
+    private func lockReason(for d: DisplayInfo) -> String {
+        let builtinDisabledByUs = disabled.values.contains { $0.isBuiltin }
+        if !d.isBuiltin && builtinDisabledByUs && service.hasBuiltInDisplay() {
+            return "内建屏已关，先打开它才能关这块"
+        }
+        return "唯一亮着的屏，关掉会全黑"
     }
 
     @discardableResult

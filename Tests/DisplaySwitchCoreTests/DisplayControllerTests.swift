@@ -25,9 +25,14 @@ final class MockService: SystemDisplayService {
     private var liveConnected: Set<CGDirectDisplayID>
     func liveExternalCount() -> Int? { liveQueryFails ? nil : liveConnected.count }
     /// 物理连着的外接屏各自走的接口,与计数同源。真机上是节点路径,如 `Port-HDMI@1/DisplayPort`。
+    /// 各外接屏走的接口路径;默认是不属于任何已知接法的 `Port-Mock@N/DisplayPort`,测试可改成真实形态。
+    var portNames: [CGDirectDisplayID: String] = [:]
     func liveExternalPorts() -> [String]? {
-        liveQueryFails ? nil : liveConnected.sorted().map { "Port-Mock@\($0)/DisplayPort" }
+        liveQueryFails ? nil : liveConnected.sorted().map { portNames[$0] ?? "Port-Mock@\($0)/DisplayPort" }
     }
+    /// 当前显示模式;没设的屏返回 nil(如已关闭)。
+    var modes: [CGDirectDisplayID: DisplayMode] = [:]
+    func currentMode(_ id: CGDirectDisplayID) -> DisplayMode? { activeIDs.contains(id) ? modes[id] : nil }
 
     func activeDisplays() -> [DisplayInfo] {
         known.values
@@ -623,6 +628,71 @@ func diagnosticsPortsFollowPhysicalConnection() {
     #expect(ctrl.blackoutDiagnostics().contains("外接屏连接=[Port-Mock@5/DisplayPort]"))
     svc.liveQueryFails = true
     #expect(ctrl.blackoutDiagnostics().contains("外接屏连接=查询失败"))
+}
+
+// MARK: - 面板信息:每块屏的说明行、锁住原因、顶部摘要
+
+@Test("面板说明行:内建 / 外接、接法、分辨率与刷新率;接法唯一时才写")
+func panelDetailLines() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    svc.portNames = [4: "Port-USB-C@1/CIO/DisplayPort@0", 5: "Port-USB-C@1/CIO/DisplayPort@1"]
+    svc.modes = [1: DisplayMode(pixelWidth: 3024, pixelHeight: 1964, refreshRate: 0),
+                 4: DisplayMode(pixelWidth: 3840, pixelHeight: 2160, refreshRate: 60),
+                 5: DisplayMode(pixelWidth: 3840, pixelHeight: 2160, refreshRate: 59.94)]
+    let ctrl = DisplayController(service: svc)
+    let items = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
+    #expect(items[1]?.isBuiltin == true)
+    #expect(items[1]?.detail == "内建 · 3024×1964")              // 刷新率可变(报 0)时不写 Hz
+    #expect(items[4]?.detail == "外接 · 雷雳 · 3840×2160 · 60Hz")
+    #expect(items[5]?.detail == "外接 · 雷雳 · 3840×2160 · 60Hz")  // 59.94 四舍五入
+
+    // 接法混用(一块 HDMI、一块雷雳):分不清哪块走哪条,宁可不写,也不写错
+    svc.portNames = [4: "Port-HDMI@1/DisplayPort", 5: "Port-USB-C@1/CIO/DisplayPort@0"]
+    #expect(ctrl.menuItems().first { $0.id == 4 }?.detail == "外接 · 3840×2160 · 60Hz")
+    // 只有 HDMI
+    svc.unplug(5); svc.portNames = [4: "Port-HDMI@1/DisplayPort"]
+    #expect(ctrl.menuItems().first { $0.id == 4 }?.detail == "外接 · HDMI · 3840×2160 · 60Hz")
+    // 查不到接口:不写接法
+    svc.liveQueryFails = true
+    #expect(ctrl.menuItems().first { $0.id == 4 }?.detail == "外接 · 3840×2160 · 60Hz")
+}
+
+@Test("面板说明行:被关掉的屏写「已关闭」,不写分辨率")
+func panelDetailForDisabled() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    svc.hasBuiltIn = true
+    svc.modes = [1: DisplayMode(pixelWidth: 3024, pixelHeight: 1964, refreshRate: 120)]
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    #expect(ctrl.menuItems().first { $0.id == 1 }?.detail == "内建 · 已关闭")
+}
+
+@Test("开关被锁住时说清原因,能关的屏不写原因")
+func lockReasons() {
+    // 台式机只剩一块
+    let desk = MockService(all: [makeInfo(id: 4, x: 0)])
+    #expect(DisplayController(service: desk).menuItems().first?.lockReason == "唯一亮着的屏，关掉会全黑")
+
+    // 笔记本:关掉内建后,最后一块外接屏被锁——给出能做的事
+    let lap = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
+    lap.hasBuiltIn = true
+    let ctrl = DisplayController(service: lap)
+    #expect(ctrl.menuItems().allSatisfy { $0.lockReason == nil })     // 两块都能关
+    _ = ctrl.toggle(id: 1)
+    let items = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
+    #expect(items[4]?.lockReason == "内建屏已关，先打开它才能关这块")
+    #expect(items[1]?.lockReason == nil)                              // 关着的屏随时能开
+}
+
+@Test("面板摘要:共几块、几块亮着")
+func panelSummaryLine() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    #expect(panelSummary(ctrl.menuItems()) == "3 块屏 · 2 块亮着")
+    #expect(panelSummary([]) == "没有检测到显示器")
 }
 
 // MARK: - 合盖 / 开盖(2026-09-18 事故:拔坞合盖走人,到新地点开盖仍全黑)

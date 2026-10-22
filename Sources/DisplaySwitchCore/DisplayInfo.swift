@@ -1,5 +1,18 @@
 import CoreGraphics
 
+/// 一块屏当前的显示模式(像素尺寸与刷新率)。`refreshRate` 为 0 表示可变刷新率,系统不报固定值。
+public struct DisplayMode: Equatable, Sendable {
+    public let pixelWidth: Int
+    public let pixelHeight: Int
+    public let refreshRate: Double
+
+    public init(pixelWidth: Int, pixelHeight: Int, refreshRate: Double) {
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.refreshRate = refreshRate
+    }
+}
+
 /// 一块显示器的不可变快照。
 public struct DisplayInfo: Equatable, Sendable {
     public let id: CGDirectDisplayID
