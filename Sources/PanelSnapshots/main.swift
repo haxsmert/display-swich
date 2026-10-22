@@ -58,8 +58,8 @@ final class KeyableWindow: NSWindow {
 
 /// 把视图放进离屏窗口,按实际排版尺寸渲染成 PNG(含系统原生开关控件)。
 func render(_ model: PanelModel, to url: URL) throws {
-    // 与 app 里一样套上外框(圆角 + 指向图标的箭头,截图里箭头居中)。
-    let host = NSHostingView(rootView: PanelChrome(arrow: PanelArrow()) { PanelView(model: model) })
+    // 与 app 里一样套上外框(圆角 + 指向图标的箭头,截图里箭头居中)。离屏渲染取不到玻璃背后的内容,用实底。
+    let host = NSHostingView(rootView: PanelChrome(arrow: PanelArrow(), material: .solid) { PanelView(model: model) })
     host.appearance = NSAppearance(named: .aqua)   // 截图固定浅色,与 README 预期一致
     host.layoutSubtreeIfNeeded()
     let size = host.fittingSize

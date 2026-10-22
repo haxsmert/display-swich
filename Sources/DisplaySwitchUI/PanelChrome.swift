@@ -7,28 +7,42 @@ public final class PanelArrow: ObservableObject {
     public init(x: CGFloat? = nil) { self.x = x }
 }
 
-/// 面板外框:实底圆角 + 顶边一个指向菜单栏图标的小箭头,与系统弹出面板的样子一致,
-/// 让人一眼看出面板属于哪个图标。面板被屏幕边缘往里推时,箭头仍对准图标。
+/// 面板外框的材质。
+public enum PanelMaterial: Sendable {
+    /// 系统玻璃(macOS 26 起控制中心等系统面板用的材质);更早的系统自动退回实底。
+    case glass
+    /// 实底。截图工具用:离屏渲染时玻璃取不到窗口背后的内容,画出来不真实。
+    case solid
+}
+
+/// 面板外框:圆角 + 顶边一个指向菜单栏图标的小箭头,让人一眼看出面板属于哪个图标。
+/// 面板被屏幕边缘往里推时,箭头仍对准图标。材质随系统:macOS 26 起是系统玻璃。
 public struct PanelChrome<Content: View>: View {
     @ObservedObject var arrow: PanelArrow
+    let material: PanelMaterial
     let content: Content
 
     static var arrowHeight: CGFloat { 9 }
 
-    public init(arrow: PanelArrow, @ViewBuilder content: () -> Content) {
+    public init(arrow: PanelArrow, material: PanelMaterial = .glass, @ViewBuilder content: () -> Content) {
         self.arrow = arrow
+        self.material = material
         self.content = content()
     }
 
     public var body: some View {
         let shape = CalloutShape(arrowX: arrow.x, arrowHeight: Self.arrowHeight)
-        // 只画底与边,不裁剪内容:面板内容都在圆角以内(卡片有内边距、分隔线不进圆角区),无需裁剪;
+        // 只画底,不裁剪内容:面板内容都在圆角以内,无需裁剪;
         // 而裁剪会让按钮里的图标在截图工具的离屏渲染中丢失(实测,app 里不受影响)。
-        content
-            .padding(.top, Self.arrowHeight)
-            // 面板底用系统的控件底色(浅色模式下是纯净的浅底):窗口底色偏灰,与淡蓝的「开着」行混出浑浊的灰紫(实测)。
-            .background(shape.fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(shape.stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
+        let padded = content.padding(.top, Self.arrowHeight)
+        if material == .glass, #available(macOS 26.0, *) {
+            padded.glassEffect(.regular, in: shape)
+        } else {
+            // 实底用系统的控件底色(浅色模式下是纯净的浅底):窗口底色偏灰,与强调色混出浑浊的灰紫(实测)。
+            padded
+                .background(shape.fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(shape.stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
+        }
     }
 }
 
@@ -37,7 +51,7 @@ struct CalloutShape: Shape {
     var arrowX: CGFloat?
     var arrowHeight: CGFloat
     var arrowWidth: CGFloat = 20
-    var cornerRadius: CGFloat = 12
+    var cornerRadius: CGFloat = 16      // macOS 26 起系统面板的圆角更大
 
     func path(in rect: CGRect) -> Path {
         let top = rect.minY + arrowHeight

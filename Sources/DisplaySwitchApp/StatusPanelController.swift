@@ -43,7 +43,7 @@ final class StatusPanelController: NSObject {
 
         panel.contentView = hosting
         panel.isOpaque = false
-        panel.backgroundColor = .clear      // 圆角与箭头之外透明;面板本身是实底(见 PanelChrome)
+        panel.backgroundColor = .clear      // 圆角与箭头之外透明;面板的底由 PanelChrome 画(系统玻璃)
         panel.hasShadow = true
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -77,7 +77,7 @@ final class StatusPanelController: NSObject {
             guard app?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
             self?.closePanel()
         })
-        // 内容变了(多了一行锁住原因、屏数变化)就按新尺寸重新摆放。
+        // 内容变了(屏数增减)就按新尺寸重新摆放。
         modelChange = model.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { if self?.isOpen == true { self?.placePanel() } }
         }
@@ -101,7 +101,7 @@ final class StatusPanelController: NSObject {
         // 每次打开都重新读系统真相(面板开着时另由屏幕参数变化通知刷新)。
         model.reload()
         isOpen = true
-        placePanel(animated: false)
+        placePanel()
         if !panel.isVisible { panel.alphaValue = 0 }
         panel.makeKeyAndOrderFront(nil)
         // 渐显,节奏与系统菜单一致;正在渐隐时再打开,就从当前透明度直接回到不透明。
@@ -152,18 +152,28 @@ final class StatusPanelController: NSObject {
         }
     }
 
-    /// 菜单栏图标在屏幕上的位置;图标还没摆好(尺寸为 0)时返回 nil。
+    /// 菜单栏图标在屏幕上的位置;图标还没摆好时返回 nil。
+    ///
+    /// 「没摆好」有两种(实测):刚启动时尺寸为 0(40×0);主屏切换时,图标窗口会先被放到新屏
+    /// 左上角**之外**的占位点 `(0, 1080)`——整个图标在新屏的上边缘以上,不在任何屏的菜单栏里——
+    /// 约 3 毫秒后才到真实位置。面板若贴过去,就会先闪到屏幕左上角(他看到的「从左上角飘过去」)。
+    /// 判据取原理而非取值:图标中心不在任何一块屏上,就没有菜单栏可贴。
     private func iconFrame() -> NSRect? {
         guard let frame = statusItem.button?.window?.frame, frame.height > 0 else { return nil }
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        guard NSScreen.screens.contains(where: { $0.frame.contains(center) }) else { return nil }
         return frame
     }
 
     /// 把面板贴在图标正下方,水平居中对齐图标,超出屏幕边缘时往里收。
-    /// `animated`:同一块屏上挪位置时平滑跟过去;换屏、尺寸变化、刚打开时直接就位。
-    private func placePanel(animated: Bool = true) {
+    ///
+    /// **只直接就位,不做跟随动画**:图标每挪一次(菜单栏重排时会连挪几次,实测 1568→1385),
+    /// 面板在同一时刻挪到同一处,看上去与图标是一体的。曾给同屏挪动加过 0.16 秒的平滑,
+    /// 结果面板总是慢图标半拍、从上一个位置滑过去,赶上上面那个占位点就是从左上角飘来(2026-10-22)。
+    private func placePanel() {
         guard let icon = iconFrame() else { return }
         let size = hosting.fittingSize
-        let screen = statusItem.button?.window?.screen ?? NSScreen.screens.first { $0.frame.contains(icon.origin) }
+        let screen = NSScreen.screens.first { $0.frame.contains(NSPoint(x: icon.midX, y: icon.midY)) }
         var x = icon.midX - size.width / 2
         if let visible = screen?.visibleFrame {
             x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
@@ -172,19 +182,10 @@ final class StatusPanelController: NSObject {
         let frame = NSRect(x: x, y: icon.minY - size.height - 2, width: size.width, height: size.height)
         arrow.x = icon.midX - x
         guard frame != panel.frame else { return }
-        let sameScreen = panel.screen != nil && panel.screen == screen
-        if animated, isOpen, sameScreen, frame.size == panel.frame.size {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.16
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                panel.animator().setFrame(frame, display: true)
-            }
-        } else {
-            panel.setFrame(frame, display: true)
-        }
+        panel.setFrame(frame, display: true)
     }
 
-    /// 主屏刚变时图标正在搬家,位置可能一时还是 0 或旧值;等它就位再摆,最多等 2 秒。
+    /// 主屏刚变时图标正在搬家,通知不一定每一步都有;隔一会儿再对一次位置,最多 2 秒。
     private func placePanelWhenIconReady(attemptsLeft: Int = 10) {
         placePanel()
         guard attemptsLeft > 0 else { return }

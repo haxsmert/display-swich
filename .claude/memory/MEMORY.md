@@ -4,3 +4,4 @@
 - [两次内核崩溃是雷雳显示驱动卡死](panic-thunderbolt-dp-wedge-not-displayswitch.md) — 9/29 已排除本 app、9/22 未能完全排除;再遇崩溃先按其中特征与核查法判定
 - [显示器睡眠中救援会忙等](rescue-during-display-sleep-spins.md) — 硬试会在主线程卡约 10 秒并失败;v1.0.15 改为等唤醒,已真机验收并发版
 - [显示故障先恢复再汇报(本项目落法)](restore-visibility-before-reporting.md) — 通用规矩在全局 CLAUDE.md;这里记残影屏怎么恢复、拔插前先查卡死
+- [替换运行中的实例会让关掉的屏亮回](swapping-running-instance-relights-screens.md) — 换候选版前先记下旧实例关了哪些屏、哪块是主屏,换完立刻关回去

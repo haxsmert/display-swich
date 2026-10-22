@@ -695,6 +695,18 @@ func panelSummaryLine() {
     #expect(panelSummary([]) == "没有检测到显示器")
 }
 
+@Test("只剩最后一块亮着、被锁住时,顶部摘要就是提示区:改写锁住原因")
+func panelSummaryShowsLockHint() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 1)
+    _ = ctrl.toggle(id: 4)
+    #expect(panelSummary(ctrl.menuItems()) == "至少要保留一块屏幕点亮")
+    _ = ctrl.toggle(id: 4)                                    // 再开回一块:不再锁住,摘要恢复计数
+    #expect(panelSummary(ctrl.menuItems()) == "3 块屏 · 2 块亮着")
+}
+
 // MARK: - 合盖 / 开盖(2026-09-18 事故:拔坞合盖走人,到新地点开盖仍全黑)
 
 @Test("外接屏已被拔走:绝不对它失效的 display ID 下恢复指令")
