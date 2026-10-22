@@ -58,7 +58,8 @@ final class KeyableWindow: NSWindow {
 
 /// 把视图放进离屏窗口,按实际排版尺寸渲染成 PNG(含系统原生开关控件)。
 func render(_ model: PanelModel, to url: URL) throws {
-    let host = NSHostingView(rootView: PanelView(model: model))
+    // 与 app 里一样套上外框(圆角 + 指向图标的箭头,截图里箭头居中)。
+    let host = NSHostingView(rootView: PanelChrome(arrow: PanelArrow()) { PanelView(model: model) })
     host.appearance = NSAppearance(named: .aqua)   // 截图固定浅色,与 README 预期一致
     host.layoutSubtreeIfNeeded()
     let size = host.fittingSize
@@ -66,6 +67,8 @@ func render(_ model: PanelModel, to url: URL) throws {
     let window = KeyableWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host
     window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+    // open 启动的新 app 一般会被系统激活,但不是每次都成(实测偶发);再主动请求一次。
+    if #available(macOS 14.0, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
     window.makeKeyAndOrderFront(nil)
     RunLoop.main.run(until: Date().addingTimeInterval(0.5))   // 让 SwiftUI 完成布局与首帧绘制
     // 没成为当前 app 时开关会是灰的,截出来与真机不符;宁可失败,也不生成误导的图。
@@ -89,7 +92,7 @@ try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories:
 
 let service = DemoDisplayService()
 let controller = DisplayController(service: service)
-let model = PanelModel(controller: controller, lastRescueProvider: { nil }, version: "1.0.17")
+let model = PanelModel(controller: controller, lastRescueProvider: { nil }, version: "1.0.18")
 
 // ① 全部亮着
 model.reload()

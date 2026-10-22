@@ -668,20 +668,20 @@ func panelDetailForDisabled() {
     #expect(ctrl.menuItems().first { $0.id == 1 }?.detail == "内建 · 已关闭")
 }
 
-@Test("开关被锁住时说清原因,能关的屏不写原因")
+@Test("开关被锁住时说清原因:至少要保留一块屏幕点亮;能关的屏不写原因")
 func lockReasons() {
     // 台式机只剩一块
     let desk = MockService(all: [makeInfo(id: 4, x: 0)])
-    #expect(DisplayController(service: desk).menuItems().first?.lockReason == "唯一亮着的屏，关掉会全黑")
+    #expect(DisplayController(service: desk).menuItems().first?.lockReason == "至少要保留一块屏幕点亮")
 
-    // 笔记本:关掉内建后,最后一块外接屏被锁——给出能做的事
+    // 笔记本:关掉内建后,最后一块外接屏被锁——原因是同一条规则,不是「先开内建屏」
     let lap = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920)])
     lap.hasBuiltIn = true
     let ctrl = DisplayController(service: lap)
     #expect(ctrl.menuItems().allSatisfy { $0.lockReason == nil })     // 两块都能关
     _ = ctrl.toggle(id: 1)
     let items = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
-    #expect(items[4]?.lockReason == "内建屏已关，先打开它才能关这块")
+    #expect(items[4]?.lockReason == "至少要保留一块屏幕点亮")
     #expect(items[1]?.lockReason == nil)                              // 关着的屏随时能开
 }
 

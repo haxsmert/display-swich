@@ -19,7 +19,7 @@ public struct PanelView: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 20)
                 }
                 ForEach(model.items, id: \.id) { item in
-                    DisplayRow(item: item, supported: model.supported) { on in model.setOn(on, for: item.id) }
+                    DisplayRow(item: item, supported: model.supported) { model.toggle(item.id) }
                 }
             }
             .padding(12)
@@ -27,7 +27,7 @@ public struct PanelView: View {
             footer
         }
         .frame(width: 340)
-        .background(Color(nsColor: .windowBackgroundColor))
+        // 底色与外框由 PanelChrome 画(圆角 + 指向图标的箭头)。
     }
 
     private var header: some View {
@@ -95,47 +95,97 @@ public struct PanelView: View {
     }
 }
 
-/// 一块屏一张卡片:图标、名称、说明行、开关;开关被锁住时直接写出原因。
+/// 一块屏一张卡片:**整行就是开关**,点哪里都行;右侧的开关图形只显示真实状态,不单独接收点击。
+/// 被锁住时整行不可点,并直接写出原因。
 private struct DisplayRow: View {
     let item: DisplayMenuItem
     let supported: Bool
-    let setOn: (Bool) -> Void
+    let toggle: () -> Void
 
     private var locked: Bool { item.isOn && !item.canToggleOff }
+    private var clickable: Bool { supported && !locked }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: item.isBuiltin ? "laptopcomputer" : "display")
-                .font(.system(size: 18))
-                .foregroundStyle(item.isOn ? .primary : .tertiary)
-                .frame(width: 28, height: 22)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.label)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(item.isOn ? .primary : .secondary)
-                    .lineLimit(1)
-                Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                if let reason = item.lockReason {
-                    Label(reason, systemImage: "lock")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .padding(.top, 2)
+        Button(action: toggle) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: item.isBuiltin ? "laptopcomputer" : "display")
+                    .font(.system(size: 18))
+                    .foregroundStyle(item.isOn ? .primary : .tertiary)
+                    .frame(width: 28, height: 22)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.label)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(item.isOn ? .primary : .secondary)
+                        .lineLimit(1)
+                    Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if let reason = item.lockReason {
+                        Label(reason, systemImage: "lock")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    }
                 }
+                Spacer(minLength: 8)
+                SwitchIndicator(isOn: item.isOn, dimmed: !clickable)
+                    .padding(.top, 2)
             }
-            Spacer(minLength: 8)
-            Toggle(item.label, isOn: Binding(get: { item.isOn }, set: setOn))
-                .toggleStyle(.switch)
-                .labelsHidden()
-                .disabled(!supported || locked)
-                .help(locked ? (item.lockReason ?? "") : (item.isOn ? "关掉这块屏" : "打开这块屏"))
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
-        )
+        .buttonStyle(RowButtonStyle())
+        .disabled(!clickable)
+        .help(locked ? (item.lockReason ?? "") : (item.isOn ? "点击关掉这块屏" : "点击打开这块屏"))
+        .accessibilityLabel("\(item.label),\(item.isOn ? "已打开" : "已关闭")")
+        .accessibilityHint(clickable ? (item.isOn ? "点击关掉" : "点击打开") : (item.lockReason ?? ""))
+    }
+}
+
+/// 开关的样子,只用来显示状态(整行才是点击区域)。外形与系统开关一致:开为强调色,关为灰。
+private struct SwitchIndicator: View {
+    let isOn: Bool
+    let dimmed: Bool
+
+    var body: some View {
+        ZStack(alignment: isOn ? .trailing : .leading) {
+            Capsule()
+                .fill(isOn ? Color.accentColor : Color(nsColor: .tertiaryLabelColor).opacity(0.35))
+            Circle()
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.18), radius: 0.8, y: 0.5)
+                .padding(2)
+        }
+        .frame(width: 38, height: 22)
+        .opacity(dimmed ? 0.45 : 1)
+        .animation(.easeOut(duration: 0.15), value: isOn)
+    }
+}
+
+/// 卡片底色;鼠标悬停时加深一点,按下时再深一点——让人看出整行可以点。
+private struct RowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        RowBody(configuration: configuration)
+    }
+
+    private struct RowBody: View {
+        let configuration: ButtonStyle.Configuration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.primary.opacity(!isEnabled ? 0 : configuration.isPressed ? 0.09 : hovering ? 0.045 : 0))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
+                .onHover { hovering = $0 }
+        }
     }
 }

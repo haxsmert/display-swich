@@ -106,7 +106,7 @@ public final class DisplayController {
             let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
             return DisplayMenuItem(id: d.id, label: labels[d.id] ?? displayLabel(for: d), isOn: on, canToggleOff: canOff,
                                    isBuiltin: d.isBuiltin, detail: detailLine(for: d, isOn: on, link: link),
-                                   lockReason: (service.isSupported && on && !canOff) ? lockReason(for: d) : nil)
+                                   lockReason: (service.isSupported && on && !canOff) ? lockReason : nil)
         }
     }
 
@@ -122,16 +122,10 @@ public final class DisplayController {
         return parts.joined(separator: " · ")
     }
 
-    /// 亮着却不能关时,说清为什么。只在 `canDisable` 判否时调用——它判否只有一种情形:
-    /// 关掉后一块亮着的屏都不剩,且没有「可开盖恢复的内建屏」兜底。
-    /// 兜底缺失若是因为内建屏被本 app 关了,就告诉他能做什么(先开内建屏),而不只是说不行。
-    private func lockReason(for d: DisplayInfo) -> String {
-        let builtinDisabledByUs = disabled.values.contains { $0.isBuiltin }
-        if !d.isBuiltin && builtinDisabledByUs && service.hasBuiltInDisplay() {
-            return "内建屏已关，先打开它才能关这块"
-        }
-        return "唯一亮着的屏，关掉会全黑"
-    }
+    /// 亮着却不能关时,说清为什么。`canDisable` 判否只有一种情形:关掉后一块亮着的屏都不剩
+    /// (且没有可开盖恢复的内建屏兜底),所以原因只有一条,措辞取他本人的说法(2026-10-22)。
+    /// 曾按「内建屏被关」另给一句「先打开它才能关这块」,他指出含义不对:规则是保底,不是开内建屏的前提。
+    private var lockReason: String { "至少要保留一块屏幕点亮" }
 
     @discardableResult
     public func toggle(id: CGDirectDisplayID) -> Bool {
