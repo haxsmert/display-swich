@@ -6,4 +6,4 @@
 - [显示故障先恢复再汇报(本项目落法)](restore-visibility-before-reporting.md) — 通用规矩在全局 CLAUDE.md;这里记残影屏怎么恢复、拔插前先查卡死
 - [替换运行中的实例会让关掉的屏亮回](swapping-running-instance-relights-screens.md) — 换候选版前先记下旧实例关了哪些屏、哪块是主屏,换完立刻关回去
 - [动效修复要录屏逐帧验收](verify-animation-by-screen-recording.md) — 凭推理宣布修好两次都被他打回;附录屏、拆帧、免手点的做法
-- [照原生做要逐像素取证](compare-ui-against-native-by-pixels.md) — 白底垫窗 + 同玻璃候选对照;颜色只认截图;测试别发 Esc(会打断他前台的 Claude Code)
+- [照原生做要逐像素取证](compare-ui-against-native-by-pixels.md) — 白底垫窗 + 同玻璃候选对照;颜色只认截图;发 Esc 前先把焦点挪到桌面;动蓝牙设备先核对是哪一行
