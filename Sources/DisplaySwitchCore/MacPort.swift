@@ -41,6 +41,8 @@ public func macPortLabel(_ port: MacPort) -> String {
 // (`dcpext0` 下的端点都叫 `dispext0:…`,`dcp` 下有 `disp0:…`);连接管理器(`AppleDisplayConnectionManager`)的
 // `ConnectionMapping` 也写着 `role=DCP、Address=0.4.0`,与这条链读出的结果一致。
 // 这条链按显示控制器对应,**同型号、EDID 完全相同的两块屏也不会对错**——EDID 对不上是哪块,曾是不写接法的原因。
+// 2026-10-23 在 MacBook 上证实(两块同型号屏分插 1 号口与 3 号口上的拓展坞):把屏幕编号 4 单独切到 30Hz,
+// 只有 `dispext0` 的 `DPTimingModeId` 跟着变(46 → 67),与 CoreDisplay 给的位置一致;另一块只能是 `dispext1`。
 // 都是系统未写成文档的数据,解析不了就不写,不猜。
 
 /// 交换器里的一条路由。

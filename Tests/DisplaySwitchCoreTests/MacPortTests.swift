@@ -81,6 +81,12 @@ func macPortsFromCrossbar() {
             == ["dispext0": .thunderbolt(2), "dispext1": .thunderbolt(2)])
 }
 
+@Test("MacBook:一块直插 1 号口、一块经插在 3 号口的拓展坞,各写各的口(实机路由)")
+func macPortsOnMacBookSplitPorts() {
+    #expect(macPortsByController(routes: ["0:ufp0,0-dfp0,0", "0:ufp1,0-dfp2,1"], crossbar: xbar, ufps: ufps, dfps: dfps)
+            == ["dispext0": .thunderbolt(1), "dispext1": .thunderbolt(3)])
+}
+
 @Test("MacBook:机身 HDMI 上的屏由 dcpext0 输出,对到 HDMI(实机路由)")
 func macPortsOnMacBookHDMI() {
     #expect(macPortsByController(routes: ["0:ufp0,0-dfp3,0"], crossbar: xbar, ufps: ufps, dfps: dfps) == ["dispext0": .hdmi(1)])
