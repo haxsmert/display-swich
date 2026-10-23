@@ -66,13 +66,13 @@ func namesWithoutSerials() {
     #expect(names[2] == DisplayNames(label: "External Display (1)", sizingLabel: "External Display (2)（主）", serialTail: nil))
     #expect(names[4]?.label == "External Display (2)" && names[4]?.serialTail == nil)
 }
-@Test("名字独一无二:不编号、不写尾号;关掉前带着的旧号也去掉(同系统设置)")
+@Test("名字独一无二:不编号(同系统设置),关掉前带着的旧号也去掉;外接屏照写尾号")
 func namesForUniqueDisplays() {
     let names = displayNames(for: [makeInfo(id: 1, builtin: true, main: true, name: "Built-in Retina Display", serial: "PANEL1"),
                                    makeInfo(id: 2, active: false, name: "External Display (2)", serial: "SN-0002")],
                              knownNumbers: [:])
     #expect(names[1] == DisplayNames(label: "Built-in Retina Display（主）", sizingLabel: "Built-in Retina Display（主）", serialTail: nil))
-    #expect(names[2] == DisplayNames(label: "External Display", sizingLabel: "External Display（主）", serialTail: nil))
+    #expect(names[2] == DisplayNames(label: "External Display", sizingLabel: "External Display（主）", serialTail: "…0002"))
 }
 
 // MARK: 序列号尾号 serialTails
@@ -90,10 +90,10 @@ func tailsGrowUntilDistinct() {
     let mid = serialTails(for: [makeInfo(id: 1, serial: "X1-0000"), makeInfo(id: 2, serial: "X2-0000")])
     #expect(mid == [1: "…1-0000", 2: "…2-0000"])
 }
-@Test("名字独一无二、或读不到序列号的屏不写尾号")
-func tailsOnlyWhenNeeded() {
+@Test("外接屏只接着一块也写尾号(两台换着插时靠它认);内建屏、读不到序列号的屏不写")
+func tailsForEveryExternalWithSerial() {
     #expect(serialTails(for: [makeInfo(id: 1, builtin: true, name: "Built-in Retina Display", serial: "PANEL123456"),
-                              makeInfo(id: 2, name: "External Display", serial: "EXT0000001")]).isEmpty)
+                              makeInfo(id: 2, name: "External Display", serial: "EXT0000001")]) == [2: "…0001"])
     #expect(serialTails(for: [makeInfo(id: 1), makeInfo(id: 2)]).isEmpty)
     // 同名三块里只有两块读得到序列号:只给这两块写
     #expect(serialTails(for: [makeInfo(id: 1, serial: "SN-0001"), makeInfo(id: 2, serial: "SN-0002"), makeInfo(id: 3)])

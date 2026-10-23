@@ -32,7 +32,7 @@ struct DisplayNames: Equatable {
     let serialTail: String?
 }
 
-/// 整组屏(活跃 + 已关闭)每块的写法:同型号屏带系统设置里的号 (1)(2),说明行再写序列号尾号(他的决定,2026-10-23)。
+/// 整组屏(活跃 + 已关闭)每块的写法:同型号屏带系统设置里的号 (1)(2),外接屏的说明行再写序列号尾号(他的决定,2026-10-23)。
 ///
 /// 号要和系统设置对得上(他:「不然用户怎么和系统设置里的屏幕对上」),所以两块都亮着时**照抄系统此刻给的号**。
 /// 但系统的号是「动态消歧」:关掉同名的另一块,剩下那块的号就被系统去掉——这个他明确不要(「动态关闭后缀 1、2 很没道理」)。
@@ -84,16 +84,15 @@ func identityKey(of d: DisplayInfo) -> String {
     d.serial.isEmpty ? "uuid:" + d.uuid : "serial:" + d.serial
 }
 
-/// 同型号屏的序列号尾号,写进说明行,让人分得清是哪一台(他的提议,2026-10-23:「把唯一码放出来」)。
-/// 只给基名相同、不止一块的屏里读得到序列号的那些;取末 4 位,同组里撞了就加长到能分开为止。
-/// 只露尾号:完整序列号是设备标识,不必整串出现在截图里。
+/// 外接屏的序列号尾号,写进说明行,让人认得出是哪一台(他的提议,2026-10-23:「把唯一码放出来」)。
+/// 读得到序列号的外接屏都写,同型号只接着一块时也写——两台换着插时,正要靠它认出插的是哪一台
+/// (曾只给同型号不止一块的屏写,他只插一块 HDMI 时问「为什么不显示序列号」)。内建屏不写。
+/// 取末 4 位,同型号里撞了就加长到能分开为止。只露尾号:完整序列号是设备标识,不必整串出现在截图里。
 func serialTails(for displays: [DisplayInfo]) -> [CGDirectDisplayID: String] {
     var groups: [String: [DisplayInfo]] = [:]
-    for d in displays { groups[baseName(d.name), default: []].append(d) }
+    for d in displays where !d.isBuiltin && !d.serial.isEmpty { groups[baseName(d.name), default: []].append(d) }
     var tails: [CGDirectDisplayID: String] = [:]
-    for group in groups.values where group.count > 1 {
-        let members = group.filter { !$0.serial.isEmpty }
-        guard !members.isEmpty else { continue }
+    for members in groups.values {
         let longest = members.map(\.serial.count).max() ?? 0
         var length = min(4, longest)
         while length < longest, Set(members.map { $0.serial.suffix(length) }).count < members.count { length += 1 }
