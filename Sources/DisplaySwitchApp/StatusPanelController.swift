@@ -198,7 +198,7 @@ final class StatusPanelController: NSObject {
             eventMonitors.append(m)
         }
         // Esc 收起。只在本 app 收得到按键时有效:面板不激活本 app,别的 app 在前台时,
-        // 系统把 Esc 交给那个 app,这里收不到(实测,有没有会话都一样)。
+        // 系统把 Esc 交给那个 app,这里收不到(实测,有没有会话、主动请求激活都一样,见设计文档)。
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown], handler: { [weak self] event in
             guard event.keyCode == 53 else { return event }
             self?.dismiss()

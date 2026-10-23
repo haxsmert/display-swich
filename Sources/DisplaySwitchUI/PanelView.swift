@@ -52,20 +52,19 @@ public struct PanelView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color(nsColor: .controlTextColor))
             Spacer(minLength: 16)
-            // 提示区(他的设计):平时空着,只剩最后一块亮着被锁住时写原因,原地淡入淡出。
+            // 提示区(他的设计):平时空着,只剩最后一块亮着被锁住时写原因。与行里的锁同时、直接出现和消失,
+            // 不淡入淡出——系统菜单里的内容变化都是直接到位的(见 `StatusIcon`)。
             // 锁形图标嵌在文字里、随文字排版:单独摆一个图标会把这一行撑高 1pt,面板跟着跳(截图实测)。
             ZStack(alignment: .trailing) {
                 Self.hintText(lockReasonText).hidden()          // 按会出现的那句预留宽度,提示出现时面板不变宽
                 if let hint = model.hint {
                     Self.hintText(hint)
                         .shakes(on: model.lockedTaps)
-                        .transition(.opacity)
                 }
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .animation(.easeInOut(duration: 0.15), value: model.hint)
         }
         .padding(.horizontal, 14)
         .padding(.top, 13)
@@ -178,6 +177,7 @@ private struct DeveloperMenu: View {
 ///   锁是 13pt 的 `lock.fill`、次要色,尺寸、墨量、颜色三项都与 Wi-Fi 的锁吻合(曾用 11pt,偏小)。
 /// - 照系统菜单项的「副标题」(`NSMenuItem.subtitle`,弹一个临时菜单实测):两行字的行高 36pt,
 ///   上下两行顶到顶 15pt,副标题用 `secondaryLabelColor`。曾是 46pt、行间多 2pt、说明行偏浅,比原生松散。
+/// - 照蓝牙菜单(他让我开关蓝牙键盘那一行来对照,2026-10-23):按下时整行内容变淡,见 `RowButtonStyle`。
 private struct DisplayRow: View {
     let item: DisplayMenuItem
     let supported: Bool
@@ -215,15 +215,15 @@ private struct DisplayRow: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
-                    .animatingOnly(.easeInOut(duration: 0.2)) { $0.opacity(locked ? 1 : 0) }
+                    .opacity(locked ? 1 : 0)
                     .shakes(on: lockedTaps)
             }
             .padding(.horizontal, 7)
             .frame(height: 36)
             .contentShape(Rectangle())
-            .background { if highlighted { HoverBackground() } }
         }
-        .buttonStyle(RowButtonStyle())
+        .buttonStyle(RowButtonStyle(dimsWhenPressed: clickable))
+        .background { if highlighted { HoverBackground() } }     // 放在按钮外面:按下变淡的只是内容,底不变
         .disabled(!supported)
         .onHover { inside in
             // 悬停底跟 Wi-Fi 菜单一样即时出现、即时消失,不带渐变。
@@ -242,7 +242,13 @@ private struct DisplayRow: View {
 /// - 开着:实心圆 + 白色图形,圆的颜色见 `onFill`。
 /// - 关着:系统填充色 `secondarySystemFill` 的浅灰圆 + 主文字色图形(浅色模式下纯黑,与 Wi-Fi 一致;
 ///   曾用灰色图形,看上去像不可用)。
-/// 开关时的动画**只作用在颜色与透明度上**,原地渐变,见 `animatingOnly`。
+///
+/// **开关时直接切换,不渐变**:蓝牙菜单里断开、连上键盘时,圆都是一帧之内换色(60 帧录屏逐帧看)。
+/// 系统要等的时候(连接蓝牙约 1 秒),圆保持原样、图形换成转圈,等真正完成再切;但开始转圈要在约 0.3 秒之后,
+/// 断开键盘时松开约 0.2 秒才变灰,中间不转圈。本 app 开关一块屏实测 0.06~0.18 秒(内建、外接、开、关各量一次),
+/// 都在这个范围以内,所以不转圈。曾在原地渐变 0.2 秒。
+/// 也因此行在那一刻被挪动时(见 `DisplayController.activeDisplays()`),图标不会再「从别处滑过来」——
+/// 那是挂在整行上的动画把位置变化也播了出来(他两次指出,2026-10-22),现在没有任何动画可播。
 private struct StatusIcon: View {
     let symbol: String
     let isOn: Bool
@@ -250,13 +256,10 @@ private struct StatusIcon: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Self.offFill)
-            Circle()
-                .fill(Self.onFill)
-                .animatingOnly(.easeInOut(duration: 0.2)) { $0.opacity(isOn ? 1 : 0) }
+                .fill(isOn ? Self.onFill : Self.offFill)
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .bold))
-                .animatingOnly(.easeInOut(duration: 0.2)) { $0.foregroundStyle(isOn ? Color.white : Color.primary) }
+                .foregroundStyle(isOn ? Color.white : Color.primary)
         }
         .frame(width: 26, height: 26)
     }
@@ -316,28 +319,17 @@ extension View {
             self
         }
     }
-
-    /// 只让 `body` 里加的修饰(颜色、透明度)带动画,位置与尺寸的变化一律直接到位。
-    ///
-    /// 不用 `.animation(_:value:)`:它会把**同一次刷新里**这块视图的位置变化也一起动画。
-    /// 曾因此,行在那一刻被挪动(见 `DisplayController.activeDisplays()`)时,圆形图标从别的位置
-    /// 一路滑过来——先是「蓝色从别处浮过来」,后是「从上往下滑出来」(他两次指出,2026-10-22)。
-    /// macOS 13 没有限定范围的动画,直接到位、不做动画。
-    @ViewBuilder
-    func animatingOnly<Modified: View>(_ animation: Animation,
-                                       @ViewBuilder _ body: @escaping (AnyView) -> Modified) -> some View {
-        if #available(macOS 14.0, *) {
-            self.animation(animation) { body(AnyView($0)) }
-        } else {
-            body(AnyView(self))
-        }
-    }
 }
 
-/// 行按钮不要任何按下效果:反馈就是切换本身(或被锁时的抖动),与系统菜单一致。
+/// 行按钮的按下效果照蓝牙菜单:按住时整行内容(图标与文字)不透明度降到 0.8,悬停底不变,松开即恢复,
+/// 都不带过渡(白底截图实测:按下前后图标、文字的颜色都正好是 0.8 叠在悬停底上;录屏里按下与松开都是一帧到位)。
+/// 曾没有任何按下效果。被锁住的行不变淡:它点了不会切换,反馈是抖一下。
 private struct RowButtonStyle: ButtonStyle {
+    let dimsWhenPressed: Bool
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .opacity(dimsWhenPressed && configuration.isPressed ? 0.8 : 1)
     }
 }
 
