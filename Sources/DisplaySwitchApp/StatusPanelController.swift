@@ -4,12 +4,19 @@ import SwiftUI
 import DisplaySwitchCore
 import DisplaySwitchUI
 
-/// 菜单栏图标 + 自管的面板窗口。点图标开 / 关;点面板外、按 Esc、切到别的 app 时收起。
+/// 菜单栏图标 + 自管的面板窗口。点图标开 / 关;点面板外、切到别的 app 时收起,本 app 收得到按键时按 Esc 也收起。
 ///
 /// 为什么不用系统的 NSPopover(v1.0.17 用的就是它):它挂在菜单栏图标上,而开关**主屏**时
 /// macOS 会把菜单栏连同图标搬到新的主屏,NSPopover 随之被系统收起,收起动画还按旧坐标播放——
 /// 实测:开关内建屏(主屏)后面板每次都收起,开关非主屏的外接屏则留着(2026-10-22)。
 /// 自己管窗口,何时收起由我们决定,图标挪到哪块屏,面板就跟到哪里。
+///
+/// **macOS 27 起,开 / 关走系统的「展开界面」会话**(`expandedInterfaceDelegate`),不再自己接图标的点击:
+/// 系统为不用 NSMenu、自己摆窗口的菜单栏图标提供的正式做法(见 SDK 头文件 `NSStatusItem.h` 的说明)。
+/// 会话开着时,系统给图标画上与 Wi-Fi 等系统菜单相同的高亮底——自己调 `highlight(true)` 在 macOS 27 上
+/// 画不出来(实测:同步、异步、改按钮类型都试过);图标也随之参与菜单栏的键盘导航与菜单跟踪。
+/// 我们自己收起面板时(点外面、按 Esc、切 app)要取消会话,系统随后回调「会话结束」,在那里真正收起。
+/// 更早的系统没有这套接口,照旧接图标的点击。
 final class StatusPanelController: NSObject {
     private let statusItem: NSStatusItem
     private let model: PanelModel
@@ -24,6 +31,8 @@ final class StatusPanelController: NSObject {
     private var revealed = false
     /// 面板此刻贴着的图标位置(最近一次落在菜单栏里的位置)。
     private var anchor: NSRect?
+    /// 这次「展开界面」会话开始的时刻(开机以来的秒数,与事件时间戳同一基准);没有会话为 nil。
+    private var sessionBeganAt: TimeInterval?
 
     init(controller: DisplayController) {
         let model = PanelModel(controller: controller)
@@ -36,8 +45,12 @@ final class StatusPanelController: NSObject {
 
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "display.2", accessibilityDescription: "显示器开关")
-            button.target = self
-            button.action = #selector(togglePanel(_:))
+            if #available(macOS 27.0, *) {
+                statusItem.expandedInterfaceDelegate = self
+            } else {
+                button.target = self
+                button.action = #selector(togglePanel(_:))
+            }
         }
 
         panel.contentView = PanelBackground.wrapping(hosting)
@@ -74,7 +87,7 @@ final class StatusPanelController: NSObject {
         ) { [weak self] note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             guard app?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-            self?.closePanel()
+            self?.dismiss()
         })
         // 内容变了(屏数增减)就按新尺寸重新摆放。
         modelChange = model.objectWillChange.sink { [weak self] _ in
@@ -102,19 +115,19 @@ final class StatusPanelController: NSObject {
         model.refreshDriverHealth()
         isOpen = true
         if !panel.isVisible { panel.alphaValue = 0 }
-        placePanel()        // 贴到图标下并渐显
+        placePanel()        // 贴到图标下并显示
         panel.makeKeyAndOrderFront(nil)
         installEventMonitors()
     }
 
-    /// 渐显,节奏与系统菜单一致;正在渐隐时再打开,就从当前透明度直接回到不透明。
+    /// 立刻完整显示,不渐显:Wi-Fi 菜单打开时前一帧还没有、下一帧就是完整的(60 帧录屏逐帧看,2026-10-23)。
+    /// 曾渐显 0.12 秒。用一次 0 秒的动画来设,正在渐隐时再打开,能把那段渐隐一并替掉。
     private func reveal() {
         guard !revealed else { return }
         revealed = true
         panel.ignoresMouseEvents = false
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = 0
             panel.animator().alphaValue = 1
         }
     }
@@ -127,15 +140,37 @@ final class StatusPanelController: NSObject {
         panel.alphaValue = 0
     }
 
-    private func closePanel() {
+    /// 我们这边要收起面板(点外面、按 Esc、切到别的 app、图标一直没落进菜单栏)。
+    /// 有会话时先取消它,系统随即回调 `statusItemDidEndExpandedInterfaceSession`,在那里收起;
+    /// 没有会话(更早的系统,或用 `--show-panel` 启动时弹的那一次)就直接收起。
+    private func dismiss() {
+        if #available(macOS 27.0, *), let session = statusItem.expandedInterfaceSession {
+            session.cancel()
+            return
+        }
+        closePanel()
+    }
+
+    /// 收起:渐隐约 0.12 秒、匀速,同 Wi-Fi 菜单(录屏逐帧:每帧透明度降得差不多,约 7 帧降到 0)。
+    /// 曾是 0.1 秒、先慢后快。`animated` 为假(系统要求立即收起)时直接藏起。
+    private func closePanel(animated: Bool = true) {
         guard isOpen else { return }
         isOpen = false
         revealed = false
+        sessionBeganAt = nil
         eventMonitors.forEach(NSEvent.removeMonitor)
         eventMonitors.removeAll()
+        guard animated else {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                panel.animator().alphaValue = 0
+            }
+            panel.orderOut(nil)
+            return
+        }
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.1
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .linear)
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             // 渐隐期间又被打开了,就别收。
@@ -147,30 +182,31 @@ final class StatusPanelController: NSObject {
     private func installEventMonitors() {
         guard eventMonitors.isEmpty else { return }
         // 点到别的 app 或桌面:收起。全局监听只收得到本 app 以外的点击,点面板本身不会触发。
-        // 但菜单栏图标由系统的菜单栏进程托管,点图标对我们来说也是「外面」的点击:若在这里收起,
-        // 图标自己的点击动作紧接着又把面板打开,看上去就是「再点图标收不起来」(他实测)。
-        // 所以点在图标上的不算外面,交给图标的点击动作去开关。
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+        // 菜单栏图标由系统的菜单栏进程托管,点图标对我们来说也是「外面」的点击,要单独看:
+        // - 没有会话(更早的系统):交给图标的点击动作去开关。若在这里收起,点击动作紧接着又把面板打开,
+        //   看上去就是「再点图标收不起来」(他实测)。
+        // - 有会话:会话开着时再点图标,系统什么都不做——不结束会话,也不回调(实测),由我们收起。
+        //   打开面板的那一下点击,系统处理完(开了会话)才转到这里;它按下的时刻早于会话开始,不算。
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
             guard let self else { return }
-            if let icon = self.iconFrame(), icon.contains(NSEvent.mouseLocation) { return }
-            self.closePanel()
+            if let icon = self.iconFrame(), icon.contains(NSEvent.mouseLocation) {
+                if let began = self.sessionBeganAt, event.timestamp > began { self.dismiss() }
+                return
+            }
+            self.dismiss()
         }) {
             eventMonitors.append(m)
         }
-        // Esc 收起。
+        // Esc 收起。只在本 app 收得到按键时有效:面板不激活本 app,别的 app 在前台时,
+        // 系统把 Esc 交给那个 app,这里收不到(实测,有没有会话都一样)。
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown], handler: { [weak self] event in
             guard event.keyCode == 53 else { return event }
-            self?.closePanel()
+            self?.dismiss()
             return nil
         }) {
             eventMonitors.append(m)
         }
     }
-
-    /// 系统菜单栏菜单相对图标的几何,实测(macOS 27,2026-10-22:临时状态栏菜单弹出后读窗口位置):
-    /// 菜单左缘比图标窗口左缘偏左 5pt,上缘在图标(菜单栏)下沿以下 2pt。照抄,面板的位置就与系统菜单一致。
-    private static let menuInset: CGFloat = 5
-    private static let menuGap: CGFloat = 2
 
     /// 菜单栏图标所在窗口的位置;刚启动时尺寸还是 0(实测 40×0),返回 nil。
     private func iconFrame() -> NSRect? {
@@ -187,7 +223,10 @@ final class StatusPanelController: NSObject {
         }
     }
 
-    /// 把面板贴在图标下方,位置与系统菜单栏菜单相同:左缘对齐图标,紧贴菜单栏下沿;超出屏幕边缘时往里收。
+    /// 把面板贴在图标下方,位置照菜单栏 Wi-Fi 菜单(macOS 27 实测,2026-10-23):左缘对齐图标的高亮底
+    /// (即图标窗口的左缘),上缘贴着菜单栏下沿;超出屏幕边缘时往里收。
+    /// 曾照 AppKit 系统菜单(弹一个临时状态栏菜单实测)左偏 5pt、比图标下沿再低 2pt——Wi-Fi 等控制中心那一套
+    /// 不是这样,面板因此比 Wi-Fi 菜单低了 4pt。
     ///
     /// **面板只跟着真正落在菜单栏里的图标走,且直接就位、不做跟随动画**:图标在菜单栏里挪一次
     /// (菜单栏重排时会连挪几次,实测 1559→1376),面板同一时刻挪到同一处,看上去与图标是一体的。
@@ -198,7 +237,7 @@ final class StatusPanelController: NSObject {
     ///   这时上次贴的位置仍在菜单栏里,面板原地不动——照着贴就是整块面板往下闪一帧。
     /// - 主屏切换时系统按新主屏重算全局坐标,面板与图标的数值不变、实际却落到了新主屏的
     ///   左中部;约 0.5 秒后图标才经新屏左上角外的占位点 `(0, 1080)` 落进新菜单栏。
-    ///   这时上次贴的位置已不在任何菜单栏里,面板立刻藏起,等图标落定再在它下面渐显——
+    ///   这时上次贴的位置已不在任何菜单栏里,面板立刻藏起,等图标落定再在它下面显示——
     ///   照着贴或原地不动,都是先停在别处、再跳(或飘)到图标下(他看到的「从左上角飘过去」)。
     private func placePanel() {
         guard isOpen, let icon = iconFrame() else { return }
@@ -208,12 +247,20 @@ final class StatusPanelController: NSObject {
             return
         }
         let size = hosting.fittingSize
-        var x = icon.minX - Self.menuInset
+        var x = icon.minX
         x = min(max(x, screen.visibleFrame.minX + 8), screen.visibleFrame.maxX - size.width - 8)
-        let frame = NSRect(x: x, y: icon.minY - Self.menuGap - size.height, width: size.width, height: size.height)
+        let frame = NSRect(x: x, y: menuBarBottom(of: screen, icon: icon) - size.height, width: size.width, height: size.height)
         anchor = icon
         if frame != panel.frame { panel.setFrame(frame, display: true) }
         reveal()
+    }
+
+    /// 菜单栏下沿:这块屏可见区域的上缘(实测 30pt 高的菜单栏,正是 Wi-Fi 菜单上缘所在)。
+    /// 图标窗口上下各比菜单栏多出 1~2pt(实测 33pt 高),按钮下沿又比菜单栏下沿高 0.5pt,都不能直接拿来当下沿。
+    /// 菜单栏设为自动隐藏时可见区域顶到屏幕上缘,退回按图标窗口的下沿。
+    private func menuBarBottom(of screen: NSScreen, icon: NSRect) -> CGFloat {
+        let top = screen.visibleFrame.maxY
+        return top < screen.frame.maxY ? top : icon.minY
     }
 
     /// 主屏刚变时图标正在搬家,通知不一定每一步都有;隔一会儿再对一次位置,最多 2 秒。
@@ -221,12 +268,26 @@ final class StatusPanelController: NSObject {
         placePanel()
         guard attemptsLeft > 0 else {
             // 2 秒后图标仍没落进菜单栏(如菜单栏被设为自动隐藏):不能一直隐身开着,收起。
-            if isOpen, !revealed { closePanel() }
+            if isOpen, !revealed { dismiss() }
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.placePanelWhenIconReady(attemptsLeft: attemptsLeft - 1)
         }
+    }
+}
+
+/// 系统的「展开界面」会话:用户点图标时系统开会话,我们弹面板;会话结束(再点图标、点了别的菜单栏图标,
+/// 或我们自己取消)时收起。
+@available(macOS 27.0, *)
+extension StatusPanelController: NSStatusItemExpandedInterfaceDelegate {
+    func statusItem(_ statusItem: NSStatusItem, didBegin session: NSStatusItemExpandedInterfaceSession) {
+        sessionBeganAt = ProcessInfo.processInfo.systemUptime
+        showPanel()
+    }
+
+    func statusItemDidEndExpandedInterfaceSession(_ statusItem: NSStatusItem, animated: Bool) {
+        closePanel(animated: animated)
     }
 }
 

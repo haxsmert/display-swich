@@ -19,6 +19,13 @@ public enum PanelBackground {
             let glass = NSGlassEffectView()
             glass.cornerRadius = cornerRadius
             glass.contentView = content
+            // 再把这一层裁成同样的圆角。否则面板处在前台的白色样式时,系统按整块矩形给窗口算阴影,
+            // 四个圆角外各露出一截方形灰边(Wi-Fi 菜单没有)。实测(2026-10-23,纯白垫底截图对照):
+            // 只有前台样式会这样,后台的灰色样式不会;只重算阴影(`invalidateShadow`)没用,裁切后四角干净、阴影也成了圆角。
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = cornerRadius
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = true
             return glass
         }
         let effect = NSVisualEffectView()
