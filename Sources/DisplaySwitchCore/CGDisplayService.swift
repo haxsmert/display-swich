@@ -156,10 +156,10 @@ public final class CGDisplayService: SystemDisplayService {
                       data.count >= 4 else { return nil }
                 return Int(data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
             }
-            guard let domain = number("dp-switch-dfp-domain"), let endpoint = number("dp-switch-dfp-endpoint"),
-                  let port = number("dp-switch-dfp-port"), let type = number("port-type"),
-                  let portNumber = number("port-number") else { return }
-            dfps.append(CrossbarDFP(domain: domain, endpoint: endpoint, port: port, portType: type,
+            guard let crossbar = number("dp-switch-parent"), let domain = number("dp-switch-dfp-domain"),
+                  let endpoint = number("dp-switch-dfp-endpoint"), let port = number("dp-switch-dfp-port"),
+                  let type = number("port-type"), let portNumber = number("port-number") else { return }
+            dfps.append(CrossbarDFP(crossbar: crossbar, domain: domain, endpoint: endpoint, port: port, portType: type,
                                     portNumber: portNumber, tunneled: (number("transport-tunneled") ?? 0) != 0))
         }
         var result: [String: MacPort] = [:]
@@ -169,10 +169,11 @@ public final class CGDisplayService: SystemDisplayService {
             var parent: io_registry_entry_t = 0
             guard IORegistryEntryGetParentEntry(crossbar, kIOServicePlane, &parent) == KERN_SUCCESS else { return }
             defer { IOObjectRelease(parent) }
-            // 名单是一串以 0 结尾的字符串:"dispext0\0dispext1\0…"。
-            guard let data = properties(of: parent)["ufp-endpoints"] as? Data else { return }
-            let names = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
-            result.merge(macPortsByController(routes: routes, ufpEndpoints: names, dfps: dfps)) { first, _ in first }
+            let deviceProps = properties(of: parent)
+            guard let names = (deviceProps["ufp-endpoints"] as? Data).map(crossbarEndpointNames),
+                  let handle = deviceProps["AAPL,phandle"] as? Data, handle.count >= 4 else { return }
+            let crossbarID = Int(handle.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
+            result.merge(macPortsByController(routes: routes, ufpEndpoints: names, crossbar: crossbarID, dfps: dfps)) { first, _ in first }
         }
         return result
     }

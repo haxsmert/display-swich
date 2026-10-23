@@ -4,15 +4,17 @@ import Foundation
 
 // 夹具取自他机器上的显示交换器(2026-10-23,`ioreg -l` 原样抄录形态):
 // 两块同型号屏经拓展坞接在 1 号雷雳口,分别走它的第 1、2 条雷雳隧道;机身另有 2、3 号雷雳口与一个 HDMI 口。
+/// 交换器 `display-crossbar0` 的句柄 `AAPL,phandle` = <1a010000>。
+private let xbar = 0x11A
 private let routes = ["0:ufp0,0-dfp0,1", "0:ufp1,0-dfp0,2"]
 private let ufps = ["dispext0", "dispext1", "dispext2", "dispext3", "dispext4", "dispext5", "dispext6", "dispext7", "scodec0"]
 private let dfps: [CrossbarDFP] = {
     var all: [CrossbarDFP] = []
     for (endpoint, number) in [(0, 1), (1, 2), (2, 3)] {          // atc0~atc2:1~3 号 USB-C 口,直连 + 4 条雷雳隧道
-        all.append(CrossbarDFP(domain: 0, endpoint: endpoint, port: 0, portType: 2, portNumber: number, tunneled: false))
-        for p in 1...4 { all.append(CrossbarDFP(domain: 0, endpoint: endpoint, port: p, portType: 2, portNumber: number, tunneled: true)) }
+        all.append(CrossbarDFP(crossbar: xbar, domain: 0, endpoint: endpoint, port: 0, portType: 2, portNumber: number, tunneled: false))
+        for p in 1...4 { all.append(CrossbarDFP(crossbar: xbar, domain: 0, endpoint: endpoint, port: p, portType: 2, portNumber: number, tunneled: true)) }
     }
-    all.append(CrossbarDFP(domain: 0, endpoint: 3, port: 0, portType: 6, portNumber: 1, tunneled: false))   // atc3:HDMI
+    all.append(CrossbarDFP(crossbar: xbar, domain: 0, endpoint: 3, port: 0, portType: 6, portNumber: 1, tunneled: false))   // atc3:HDMI
     return all
 }()
 
@@ -34,24 +36,41 @@ func crossbarRouteParsing() {
 
 @Test("按交换器路由对应:同型号两块屏也各对各的控制器,都是 1 号雷雳口")
 func macPortsFromCrossbar() {
-    #expect(macPortsByController(routes: routes, ufpEndpoints: ufps, dfps: dfps)
+    #expect(macPortsByController(routes: routes, ufpEndpoints: ufps, crossbar: xbar, dfps: dfps)
             == ["dispext0": .thunderbolt(1), "dispext1": .thunderbolt(1)])
 }
 
 @Test("接在不同口的屏分别对上:直连雷雳口也算雷雳口,HDMI 单独认")
 func macPortsOnDifferentPorts() {
     let mixed = ["0:ufp0,0-dfp2,0", "0:ufp1,0-dfp3,0"]                // dispext0 直连 3 号口,dispext1 走 HDMI
-    #expect(macPortsByController(routes: mixed, ufpEndpoints: ufps, dfps: dfps)
+    #expect(macPortsByController(routes: mixed, ufpEndpoints: ufps, crossbar: xbar, dfps: dfps)
             == ["dispext0": .thunderbolt(3), "dispext1": .hdmi(1)])
 }
 
 @Test("没有雷雳隧道通路的 USB-C 口写 USB-C;对不上的路由跳过,不猜")
 func macPortFallbacks() {
-    let plain = [CrossbarDFP(domain: 0, endpoint: 5, port: 0, portType: 2, portNumber: 4, tunneled: false)]
-    #expect(macPortsByController(routes: ["0:ufp0,0-dfp5,0"], ufpEndpoints: ufps, dfps: plain) == ["dispext0": .usbC(4)])
-    #expect(macPortsByController(routes: ["0:ufp0,0-dfp9,1", "0:ufp42,0-dfp0,1", "乱码"], ufpEndpoints: ufps, dfps: dfps).isEmpty)
-    let unknownType = [CrossbarDFP(domain: 0, endpoint: 0, port: 0, portType: 9, portNumber: 1, tunneled: false)]
-    #expect(macPortsByController(routes: ["0:ufp0,0-dfp0,0"], ufpEndpoints: ufps, dfps: unknownType).isEmpty)
+    let plain = [CrossbarDFP(crossbar: xbar, domain: 0, endpoint: 5, port: 0, portType: 2, portNumber: 4, tunneled: false)]
+    #expect(macPortsByController(routes: ["0:ufp0,0-dfp5,0"], ufpEndpoints: ufps, crossbar: xbar, dfps: plain) == ["dispext0": .usbC(4)])
+    #expect(macPortsByController(routes: ["0:ufp0,0-dfp9,1", "0:ufp42,0-dfp0,1", "乱码"], ufpEndpoints: ufps, crossbar: xbar, dfps: dfps).isEmpty)
+    let unknownType = [CrossbarDFP(crossbar: xbar, domain: 0, endpoint: 0, port: 0, portType: 9, portNumber: 1, tunneled: false)]
+    #expect(macPortsByController(routes: ["0:ufp0,0-dfp0,0"], ufpEndpoints: ufps, crossbar: xbar, dfps: unknownType).isEmpty)
+}
+
+@Test("有两个交换器时各管各的下游:编号重叠也不串到另一个交换器的口上")
+func macPortsPerCrossbar() {
+    let other = 0x2B0
+    let otherDFPs = [CrossbarDFP(crossbar: other, domain: 0, endpoint: 0, port: 0, portType: 2, portNumber: 5, tunneled: false),
+                     CrossbarDFP(crossbar: other, domain: 0, endpoint: 0, port: 1, portType: 2, portNumber: 5, tunneled: true)]
+    let all = dfps + otherDFPs
+    #expect(macPortsByController(routes: ["0:ufp0,0-dfp0,1"], ufpEndpoints: ufps, crossbar: xbar, dfps: all) == ["dispext0": .thunderbolt(1)])
+    #expect(macPortsByController(routes: ["0:ufp0,0-dfp0,1"], ufpEndpoints: ["dispext8"], crossbar: other, dfps: all) == ["dispext8": .thunderbolt(5)])
+    #expect(macPortsByController(routes: ["0:ufp0,0-dfp3,0"], ufpEndpoints: ["dispext8"], crossbar: other, dfps: all).isEmpty)
+}
+
+@Test("上游名单按 0 拆开:保留中间的空项,路由的序号才不会错位")
+func crossbarNames() {
+    #expect(crossbarEndpointNames(Data("dispext0\0dispext1\0".utf8)) == ["dispext0", "dispext1"])
+    #expect(crossbarEndpointNames(Data("dispext0\0\0dispext2\0".utf8)) == ["dispext0", "", "dispext2"])
 }
 
 @Test("从设备树位置里取显示控制器名")

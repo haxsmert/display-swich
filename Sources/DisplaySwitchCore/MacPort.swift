@@ -54,6 +54,9 @@ func parseCrossbarRoute(_ text: String) -> CrossbarRoute? {
 
 /// 交换器下游的一条通路(设备树里 `atc0-dpphy`、`atc0-dpin0` 这类节点上的属性)。
 struct CrossbarDFP: Equatable {
+    /// 属于哪个交换器:节点的 `dp-switch-parent`,等于那个交换器节点的 `AAPL,phandle`(实测 `1a010000`)。
+    /// 有不止一个交换器的机器(如 Ultra)上,各交换器的下游编号会重叠,必须先按它分开。
+    let crossbar: Int
     let domain: Int
     let endpoint: Int
     let port: Int
@@ -77,9 +80,10 @@ func macPort(of dfp: CrossbarDFP, among all: [CrossbarDFP]) -> MacPort? {
     }
 }
 
-/// 把交换器的路由翻成「显示控制器名 → 机身端口」,如 `["dispext0": .thunderbolt(1)]`。
-/// 某条路由对不上上游名字或下游通路,就跳过那一条。
-func macPortsByController(routes: [String], ufpEndpoints: [String], dfps: [CrossbarDFP]) -> [String: MacPort] {
+/// 把一个交换器的路由翻成「显示控制器名 → 机身端口」,如 `["dispext0": .thunderbolt(1)]`。
+/// 只在这个交换器自己的下游通路里找;某条路由对不上上游名字或下游通路,就跳过那一条。
+func macPortsByController(routes: [String], ufpEndpoints: [String], crossbar: Int, dfps allDFPs: [CrossbarDFP]) -> [String: MacPort] {
+    let dfps = allDFPs.filter { $0.crossbar == crossbar }
     var result: [String: MacPort] = [:]
     for text in routes {
         guard let r = parseCrossbarRoute(text), ufpEndpoints.indices.contains(r.ufp),
@@ -88,6 +92,14 @@ func macPortsByController(routes: [String], ufpEndpoints: [String], dfps: [Cross
         result[ufpEndpoints[r.ufp]] = port
     }
     return result
+}
+
+/// 交换器的上游名单:一串以 0 结尾的名字,"dispext0\0dispext1\0…"。保留中间的空项——
+/// 路由按序号引用名单,跳过空项会让后面的序号整体错位。
+func crossbarEndpointNames(_ data: Data) -> [String] {
+    var parts = data.split(separator: 0, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
+    if parts.last == "" { parts.removeLast() }
+    return parts
 }
 
 /// 从 CoreDisplay 给的设备树位置里取出显示控制器名,如 `…/dispext0@B0000000/…` → `dispext0`。
