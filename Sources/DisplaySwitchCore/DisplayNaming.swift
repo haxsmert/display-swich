@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// 去掉系统名末尾的 " (N)" 消歧后缀,得到基名(显示器自己报的名字,如 `Mi Monitor`)。
+/// 去掉系统名末尾的 " (N)" 消歧后缀,得到基名(显示器自己报的名字,如 `External Display`)。
 func baseName(_ name: String) -> String {
     let stripped = name.replacingOccurrences(
         of: #"\s*\(\d+\)$"#, with: "", options: .regularExpression)
