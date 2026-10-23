@@ -44,17 +44,21 @@ public struct PanelView: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    /// 标题取系统自己的叫法:控制中心与系统设置里都叫「显示器」(曾叫「显示器开关」,他嫌土)。
+    /// 标题写软件名(他的要求,2026-10-23)。曾叫「显示器开关」(他嫌土),后取系统的叫法「显示器」,
+    /// 他要换成软件名、不写中文。
     /// 字号、字重、颜色同 Wi-Fi 菜单的标题:13pt 半粗,控件文字色(实测最深处 (38, 38, 38),不是纯黑)。
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("显示器")
+            Text("DisplaySwitch")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color(nsColor: .controlTextColor))
             Spacer(minLength: 16)
             // 提示区(他的设计):平时空着,只剩最后一块亮着被锁住时写原因。与行里的锁同时、直接出现和消失,
             // 不淡入淡出——系统菜单里的内容变化都是直接到位的(见 `StatusIcon`)。
             // 锁形图标嵌在文字里、随文字排版:单独摆一个图标会把这一行撑高 1pt,面板跟着跳(截图实测)。
+            // 文字用系统菜单副标题的样式(11pt、`secondaryLabelColor`),与每行的说明行一致;
+            // 锁用 SF Symbols 跟随文字的默认大小,与汉字同高(7.5×10.5pt 对 10pt)。曾用更浅的次要色、锁缩小一号,
+            // 锁比汉字小一圈,整句发虚(他指出要优化)。没有另加上下偏移:量下来锁中心只比汉字高 0.75pt。
             ZStack(alignment: .trailing) {
                 Self.hintText(lockReasonText).hidden()          // 按会出现的那句预留宽度,提示出现时面板不变宽
                 if let hint = model.hint {
@@ -63,7 +67,7 @@ public struct PanelView: View {
                 }
             }
             .font(.system(size: 11))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
             .lineLimit(1)
         }
         .padding(.horizontal, 14)
@@ -72,7 +76,7 @@ public struct PanelView: View {
     }
 
     private static func hintText(_ hint: String) -> some View {
-        Text("\(Image(systemName: "lock.fill")) \(hint)").imageScale(.small)
+        Text("\(Image(systemName: "lock.fill")) \(hint)")
     }
 
     private var unsupportedNotice: some View {

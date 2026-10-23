@@ -4,7 +4,7 @@ import SwiftUI
 import DisplaySwitchCore
 import DisplaySwitchUI
 
-/// 菜单栏图标 + 自管的面板窗口。点图标开 / 关;点面板外、切到别的 app 时收起,本 app 收得到按键时按 Esc 也收起。
+/// 菜单栏图标 + 自管的面板窗口。点图标开 / 关;点面板外、按 Esc、切到别的 app 时收起。
 ///
 /// 为什么不用系统的 NSPopover(v1.0.17 用的就是它):它挂在菜单栏图标上,而开关**主屏**时
 /// macOS 会把菜单栏连同图标搬到新的主屏,NSPopover 随之被系统收起,收起动画还按旧坐标播放——
@@ -197,8 +197,8 @@ final class StatusPanelController: NSObject {
         }) {
             eventMonitors.append(m)
         }
-        // Esc 收起。只在本 app 收得到按键时有效:面板不激活本 app,别的 app 在前台时,
-        // 系统把 Esc 交给那个 app,这里收不到(实测,有没有会话、主动请求激活都一样,见设计文档)。
+        // Esc 收起。真键盘按下能收到(他实测);脚本从别的进程合成的 Esc 收不到、会落到前台 app,
+        // 所以只能手按验收(见设计文档)。
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown], handler: { [weak self] event in
             guard event.keyCode == 53 else { return event }
             self?.dismiss()
