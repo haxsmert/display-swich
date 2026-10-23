@@ -32,7 +32,7 @@ public struct PanelView: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 18)
                 }
                 ForEach(model.items, id: \.id) { item in
-                    DisplayRow(item: item, supported: model.supported, lockedTaps: model.lockedTaps) { model.toggle(item.id) }
+                    DisplayRow(item: item, supported: model.supported) { model.toggle(item.id) }
                 }
             }
             // 行与面板边缘的间距照 Wi-Fi 菜单悬停底的实测值(7pt,macOS 27)。
@@ -54,7 +54,7 @@ public struct PanelView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color(nsColor: .controlTextColor))
             Spacer(minLength: 16)
-            // 提示区(他的设计):平时空着,只剩最后一块亮着被锁住时写原因。与行里的锁同时、直接出现和消失,
+            // 提示区(他的设计):平时空着,只剩最后一块亮着被锁住时写原因。直接出现和消失,
             // 不淡入淡出——系统菜单里的内容变化都是直接到位的(见 `StatusIcon`)。
             // 文字用系统菜单副标题的样式(11pt、`secondaryLabelColor`),与每行的说明行一致;
             // 锁用 SF Symbols 跟随文字的默认大小,与汉字同高(7.5×10.5pt 对 10pt)。曾用更浅的次要色、锁缩小一号,
@@ -180,19 +180,20 @@ private struct DeveloperMenu: View {
 
 /// 一块屏一行,**整行就是开关**:点一下就切换,没有任何开关控件(他的要求)。
 /// 状态由行首圆形图标表达,说明行写「已关闭」——不只靠颜色。
-/// 被锁住时行尾一把锁,原因写在顶部提示区;这一行切不了,但点了要有反应:锁与顶部提示一起抖一下
-/// (他的要求)。所以它不设成不可点,只是鼠标经过时不给悬停底——悬停底表示「点了会切换」。
+/// 被锁住时原因写在顶部提示区(带锁);这一行切不了,但点了要有反应:顶部提示抖一下(他的要求)。
+/// 所以它不设成不可点,只是鼠标经过时不给悬停底——悬停底表示「点了会切换」。
+/// 行尾不放锁(他的决定,2026-10-23):锁平时透明却一直占位(锁出现时面板才不变宽),最长那行文字右边就空出
+/// 8pt 间距 + 锁宽,比左边宽一截,他两次指出右边空白。被锁的就是唯一亮着的那行,顶部提示已说清原因。
 ///
 /// 量出来的规格(macOS 27):
-/// - 照 Wi-Fi 菜单:圆离面板边缘 14pt,圆到文字 8pt;名字 13pt 常规体、控件文字色(曾用中等字重,偏粗);
-///   锁是 13pt 的 `lock.fill`、次要色,尺寸、墨量、颜色三项都与 Wi-Fi 的锁吻合(曾用 11pt,偏小)。
+/// - 照 Wi-Fi 菜单:圆离面板边缘 14pt,圆到文字 8pt;名字 13pt 常规体、控件文字色(曾用中等字重,偏粗)。
+///   文字右边也留 14pt(行内 7pt + 行与面板 7pt),与左边对称。
 /// - 照系统菜单项的「副标题」(`NSMenuItem.subtitle`,弹一个临时菜单实测):两行字的行高 36pt,
 ///   上下两行顶到顶 15pt,副标题用 `secondaryLabelColor`。曾是 46pt、行间多 2pt、说明行偏浅,比原生松散。
 /// - 照蓝牙菜单(他让我开关蓝牙键盘那一行来对照,2026-10-23):按下时整行内容变淡,见 `RowButtonStyle`。
 private struct DisplayRow: View {
     let item: DisplayMenuItem
     let supported: Bool
-    let lockedTaps: Int
     let toggle: () -> Void
 
     private var locked: Bool { item.isOn && !item.canToggleOff }
@@ -222,14 +223,7 @@ private struct DisplayRow: View {
                     .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                 }
                 .lineLimit(1)
-                // 文字列撑满,锁靠右;锁平时透明但一直占位(锁出现时面板不变宽)。最长那行的文字与锁只隔行内统一的 8pt——
-                // 曾在中间垫一个至少 12pt 的空白,加上两侧间距共 28pt,面板右边空出一大块(他指出「右边那么多空白干什么」)。
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .opacity(locked ? 1 : 0)
-                    .shakes(on: lockedTaps)
+                .frame(maxWidth: .infinity, alignment: .leading)    // 撑满整行:短的行也靠左,悬停底铺满
             }
             .padding(.horizontal, 7)
             .frame(height: 36)
