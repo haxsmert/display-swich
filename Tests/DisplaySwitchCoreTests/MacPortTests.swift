@@ -20,13 +20,16 @@ private let miniDFPs: [CrossbarDFP] = {
     return all
 }()
 
-// 夹具二取自他的 MacBook(2026-10-23):两块同型号屏经拓展坞接在 1 号雷雳口,分别走它的第 1、2 条雷雳隧道;
-// 机身另有 2、3 号雷雳口与一个 HDMI 口。下游通路照当时抄录;各协处理器占哪个上游口当时没抄,
-// 这里假设 `dcpextN` 在 N 号口(与当时读出的结果一致),待在 MacBook 上核对。
+// 夹具二取自他的 MacBook(`AppleT6050DisplayCrossbar`,2026-10-23 原样抄录):两块同型号屏经拓展坞接在一个雷雳口上,
+// 分别走它的第 1、2 条雷雳隧道;机身有 1~3 号雷雳口与一个 HDMI 口。
+// 上游:`dcpext0`~`dcpext3` 各自声明 0~3 号口(都没写 domain);交换器名单写着 dispext0~7、scodec0,
+// 但声明 5、6 号口的是两个只走 AUX 的 `dptx0-aux-ufp`、`dptx1-aux-ufp`(没有 role,读取时就不收),
+// 没有节点声明 4、7、8 号口——名单在这台机器上同样只是标签,只是前 4 项碰巧与协处理器对齐。
 /// 交换器 `display-crossbar0` 的句柄 `AAPL,phandle` = <1a010000>。
 private let xbar = 0x11A
-private let routes = ["0:ufp0,0-dfp0,1", "0:ufp1,0-dfp0,2"]
-private let ufps = (0..<8).map { CrossbarUFP(crossbar: xbar, domain: 0, endpoint: $0, role: "DCPEXT\($0)") }
+private let routes = ["0:ufp0,0-dfp0,1", "0:ufp1,0-dfp0,2"]                 // 拓展坞插在 1 号口时
+private let routesOnPort2 = ["0:ufp0,0-dfp1,1", "0:ufp1,0-dfp1,2"]          // 换插 2 号口后
+private let ufps = (0..<4).map { CrossbarUFP(crossbar: xbar, domain: 0, endpoint: $0, role: "DCPEXT\($0)") }
 private let dfps: [CrossbarDFP] = {
     var all: [CrossbarDFP] = []
     for (endpoint, number) in [(0, 1), (1, 2), (2, 3)] {          // atc0~atc2:1~3 号 USB-C 口,直连 + 4 条雷雳隧道
@@ -70,10 +73,17 @@ func upstreamIgnoresPipe() {
     #expect(macPortsByController(routes: ["0:ufp0,1-dfp4,0"], crossbar: mini, ufps: miniUFPs, dfps: miniDFPs) == ["disp0": .hdmi(1)])
 }
 
-@Test("按交换器路由对应:同型号两块屏也各对各的控制器,都是 1 号雷雳口")
+@Test("MacBook:拓展坞插在哪个雷雳口,两块屏就都写那个口")
 func macPortsFromCrossbar() {
     #expect(macPortsByController(routes: routes, crossbar: xbar, ufps: ufps, dfps: dfps)
             == ["dispext0": .thunderbolt(1), "dispext1": .thunderbolt(1)])
+    #expect(macPortsByController(routes: routesOnPort2, crossbar: xbar, ufps: ufps, dfps: dfps)
+            == ["dispext0": .thunderbolt(2), "dispext1": .thunderbolt(2)])
+}
+
+@Test("MacBook:名单上的 dispext5 并不是 5 号口上的东西,没有协处理器声明的上游口就不认")
+func upstreamNotFromNameList() {
+    #expect(macPortsByController(routes: ["0:ufp5,0-dfp1,0"], crossbar: xbar, ufps: ufps, dfps: dfps).isEmpty)
 }
 
 @Test("接在不同口的屏分别对上:直连雷雳口也算雷雳口,HDMI 单独认")

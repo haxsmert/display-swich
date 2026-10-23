@@ -34,7 +34,8 @@ public func macPortLabel(_ port: MacPort) -> String {
 // 两处曾经的误读,2026-10-23 在 Mac mini M4(机身 HDMI 接一块屏)上查清:
 // ① 上游口编号**不是**交换器 `ufp-endpoints` 名单里的序号。那份名单只是交换器给槽位贴的标签(驱动日志也照它打
 //   `dispext%u`):Mac mini M4 上名单第 0 个叫 `dispext0`,真正接在 0 号口的却是主协处理器 `dcp`,`dcpext0` 在 1 号口。
-//   按名单对,HDMI 上的屏就对不上。他的 MacBook 上两块屏都走 1 号雷雳口,名单与协处理器即便错位也看不出来。
+//   按名单对,HDMI 上的屏就对不上。他的 MacBook 上 `dcpext0`~`dcpext3` 恰好占 0~3 号口,与名单前 4 项对齐,
+//   所以按名单也读得对;但名单第 5、6 项写着 dispext5、dispext6,实际占 5、6 号口的是两个只走 AUX 的口(没有 role)。
 // ② 外接屏不一定由 `dispextN` 输出:没有内建屏的 Mac mini,机身 HDMI 由主协处理器 `dcp` 经 `disp0` 输出。
 // 协处理器与显示控制器按 `role` 对:`DCP` → `disp0`,`DCPEXTn` → `dispextn`。各协处理器固件端点的名字印证了这一点
 // (`dcpext0` 下的端点都叫 `dispext0:…`,`dcp` 下有 `disp0:…`);连接管理器(`AppleDisplayConnectionManager`)的
