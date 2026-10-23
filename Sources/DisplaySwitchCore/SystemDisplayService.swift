@@ -58,6 +58,10 @@ public protocol SystemDisplayService {
     /// 某块屏当前的显示模式;屏没点亮或查不到时返回 nil。只用于面板显示。
     func currentMode(_ id: CGDirectDisplayID) -> DisplayMode?
 
+    /// 亮着的外接屏各自接在 Mac 的哪个口(如雷雳 1),只用于面板的说明行;查不到的屏不在结果里。
+    /// 读的是系统显示交换器的当前路由,原理与实测见 `MacPort.swift`。
+    func macPorts() -> [CGDirectDisplayID: MacPort]
+
     /// 注册「显示器被物理拔掉」的**内核事件**监听(IOKit 服务终止通知),用于全黑救援。
     ///
     /// 为什么不用 CoreGraphics 的 `CGDisplayRegisterReconfigurationCallback`:
@@ -121,4 +125,9 @@ public protocol SystemDisplayService {
 
     /// 启用/断开某块屏,返回是否成功。
     func setEnabled(_ id: CGDirectDisplayID, _ on: Bool) -> Bool
+}
+
+public extension SystemDisplayService {
+    /// 默认查不到:测试替身与演示数据不必各自实现。
+    func macPorts() -> [CGDirectDisplayID: MacPort] { [:] }
 }

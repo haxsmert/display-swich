@@ -116,6 +116,79 @@ public final class CGDisplayService: SystemDisplayService {
         return DisplayMode(pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight, refreshRate: mode.refreshRate)
     }
 
+    /// 见协议注释。三步,任何一步拿不到就少写或不写,不猜:
+    /// ① 每块亮着的外接屏由哪个显示控制器输出(CoreDisplay 私有符号给的设备树位置里的 `dispextN`);
+    /// ② 显示交换器把各控制器路由到哪条下游通路(交换器驱动的 `current-state`);
+    /// ③ 那条通路属于机身哪个口(通路节点上的 `port-type` / `port-number` / `transport-tunneled`)。
+    public func macPorts() -> [CGDirectDisplayID: MacPort] {
+        guard let info = Self.displayInfoDictionary else { return [:] }
+        let byController = Self.macPortsByDisplayController()
+        guard !byController.isEmpty else { return [:] }
+        var result: [CGDirectDisplayID: MacPort] = [:]
+        for d in activeDisplays() where !d.isBuiltin {
+            guard let dict = info(d.id)?.takeRetainedValue() as? [String: Any],
+                  let location = dict["IODisplayLocation"] as? String,
+                  let controller = displayController(inLocation: location),
+                  let port = byController[controller] else { continue }
+            result[d.id] = port
+        }
+        return result
+    }
+
+    private typealias DisplayInfoFunction = @convention(c) (CGDirectDisplayID) -> Unmanaged<CFDictionary>?
+
+    /// CoreDisplay 的私有符号:给出一块屏在设备树里的位置。公开接口里没有从屏幕编号到显示控制器的对应;
+    /// 显示器工具(MonitorControl、BetterDisplay)也靠它。找不到就不写接口。
+    private static let displayInfoDictionary: DisplayInfoFunction? = {
+        guard let handle = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY),
+              let symbol = dlsym(handle, "CoreDisplay_DisplayCreateInfoDictionary") else { return nil }
+        return unsafeBitCast(symbol, to: DisplayInfoFunction.self)
+    }()
+
+    /// 读显示交换器:各交换器驱动(`AppleDisplayCrossbar` 的子类)的当前路由、它上游的控制器名单,
+    /// 加上所有下游通路的属性(挂在每个 `IODPPortService` 上方的设备节点上)。
+    private static func macPortsByDisplayController() -> [String: MacPort] {
+        var dfps: [CrossbarDFP] = []
+        forEachService(matching: "IODPPortService") { svc in
+            func number(_ key: String) -> Int? {
+                guard let data = IORegistryEntrySearchCFProperty(svc, kIOServicePlane, key as CFString, kCFAllocatorDefault,
+                                                                 IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)) as? Data,
+                      data.count >= 4 else { return nil }
+                return Int(data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
+            }
+            guard let domain = number("dp-switch-dfp-domain"), let endpoint = number("dp-switch-dfp-endpoint"),
+                  let port = number("dp-switch-dfp-port"), let type = number("port-type"),
+                  let portNumber = number("port-number") else { return }
+            dfps.append(CrossbarDFP(domain: domain, endpoint: endpoint, port: port, portType: type,
+                                    portNumber: portNumber, tunneled: (number("transport-tunneled") ?? 0) != 0))
+        }
+        var result: [String: MacPort] = [:]
+        forEachService(matching: "AppleDisplayCrossbar") { crossbar in
+            guard let state = properties(of: crossbar)["current-state"] as? [String: Any],
+                  let routes = state["dfp"] as? [String] else { return }
+            var parent: io_registry_entry_t = 0
+            guard IORegistryEntryGetParentEntry(crossbar, kIOServicePlane, &parent) == KERN_SUCCESS else { return }
+            defer { IOObjectRelease(parent) }
+            // 名单是一串以 0 结尾的字符串:"dispext0\0dispext1\0…"。
+            guard let data = properties(of: parent)["ufp-endpoints"] as? Data else { return }
+            let names = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+            result.merge(macPortsByController(routes: routes, ufpEndpoints: names, dfps: dfps)) { first, _ in first }
+        }
+        return result
+    }
+
+    private static func forEachService(matching className: String, _ body: (io_object_t) -> Void) {
+        var iter: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(className), &iter) == KERN_SUCCESS else { return }
+        defer { IOObjectRelease(iter) }
+        var svc = IOIteratorNext(iter)
+        while svc != 0 {
+            body(svc)
+            IOObjectRelease(svc)
+            svc = IOIteratorNext(iter)
+        }
+    }
+
     private static func properties(of service: io_object_t) -> [String: Any] {
         var unmanaged: Unmanaged<CFMutableDictionary>?
         guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,

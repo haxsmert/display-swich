@@ -31,6 +31,9 @@ final class MockService: SystemDisplayService {
     func liveExternalPorts() -> [String]? {
         liveQueryFails ? nil : liveConnected.sorted().map { portNames[$0] ?? "Port-Mock@\($0)/DisplayPort" }
     }
+    /// 亮着的外接屏接在 Mac 的哪个口(真机读显示交换器的路由);关着的屏查不到,不返回。
+    var ports: [CGDirectDisplayID: MacPort] = [:]
+    func macPorts() -> [CGDirectDisplayID: MacPort] { ports.filter { activeIDs.contains($0.key) } }
     /// 当前显示模式;没设的屏返回 nil(如已关闭)。
     var modes: [CGDirectDisplayID: DisplayMode] = [:]
     func currentMode(_ id: CGDirectDisplayID) -> DisplayMode? { activeIDs.contains(id) ? modes[id] : nil }
@@ -642,7 +645,7 @@ func diagnosticsPortsFollowPhysicalConnection() {
 
 // MARK: - 面板信息:每块屏的说明行、锁住原因、顶部摘要
 
-@Test("面板说明行:内建 / 外接、分辨率与刷新率;不写接法")
+@Test("面板说明行:内建 / 外接、分辨率与刷新率;查不到电脑端接口时不写接法")
 func panelDetailLines() {
     let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
     svc.hasBuiltIn = true
@@ -661,6 +664,26 @@ func panelDetailLines() {
     // 走机身 HDMI 也一样不写
     svc.unplug(5); svc.portNames = [4: "Port-HDMI@1/DisplayPort"]
     #expect(ctrl.menuItems().first { $0.id == 4 }?.detail == "外接 · 3840×2160 · 60Hz")
+}
+
+@Test("面板说明行:亮着的外接屏写电脑端的口,如「外接 · 雷雳 1」;内建屏、关着的屏不写")
+func panelDetailWithMacPort() {
+    let svc = MockService(all: [makeInfo(id: 1, builtin: true, x: 0), makeInfo(id: 4, x: 1920), makeInfo(id: 5, x: 3840)])
+    svc.hasBuiltIn = true
+    svc.modes = [1: DisplayMode(pixelWidth: 3024, pixelHeight: 1964, refreshRate: 120),
+                 4: DisplayMode(pixelWidth: 3840, pixelHeight: 2160, refreshRate: 60),
+                 5: DisplayMode(pixelWidth: 2560, pixelHeight: 1440, refreshRate: 60)]
+    svc.ports = [1: .thunderbolt(9), 4: .thunderbolt(1), 5: .hdmi(1)]   // 内建屏给了也不写
+    let ctrl = DisplayController(service: svc)
+    var items = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
+    #expect(items[1]?.detail == "内建 · 3024×1964 · 120Hz")
+    #expect(items[4]?.detail == "外接 · 雷雳 1 · 3840×2160 · 60Hz")
+    #expect(items[5]?.detail == "外接 · HDMI · 2560×1440 · 60Hz")
+    _ = ctrl.toggle(id: 4)
+    items = Dictionary(uniqueKeysWithValues: ctrl.menuItems().map { ($0.id, $0) })
+    #expect(items[4]?.detail == "外接 · 已关闭")
+    // 关掉后仍按亮着时那句(带接口)预留宽度,开回来面板不变宽
+    #expect(items[4]?.sizingDetail == "外接 · 雷雳 1 · 3840×2160 · 60Hz")
 }
 
 @Test("面板说明行:被关掉的屏写「已关闭」,不写分辨率")

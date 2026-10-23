@@ -128,11 +128,12 @@ public final class DisplayController {
         // 整组(活跃+已关闭)一起算标签:同名屏按 UUID 稳定编号,关掉其一不丢号、重开不漂移。
         let labels = displayLabels(for: ordered)
         let fallback = builtInFallbackAvailable()
+        let ports = service.macPorts()
         return ordered.map { d in
             let on = disabled[d.id] == nil
             let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
             let label = labels[d.id] ?? displayLabel(for: d)
-            let detail = detailLine(for: d, isOn: on)
+            let detail = detailLine(for: d, isOn: on, port: ports[d.id])
             if on { knownLitDetails[key(of: d)] = detail }
             return DisplayMenuItem(id: d.id, label: label, isOn: on, canToggleOff: canOff,
                                    isBuiltin: d.isBuiltin, detail: detail,
@@ -142,13 +143,16 @@ public final class DisplayController {
         }
     }
 
-    /// 说明行:内建 / 外接 → 分辨率与刷新率(亮着时)或「已关闭」。不写接法,原因见 PanelText。
-    private func detailLine(for d: DisplayInfo, isOn: Bool) -> String {
+    /// 说明行:内建 / 外接 → 接在 Mac 的哪个口(亮着的外接屏,查得到时)→ 分辨率与刷新率;关着的写「已关闭」。
+    /// 口只写电脑这一端,如「外接 · 雷雳 1 · 3840×2160 · 60Hz」,原因见 PanelText。
+    /// 关着的屏不写口:它的显示控制器已不再路由到任何口,查不到。
+    private func detailLine(for d: DisplayInfo, isOn: Bool, port: MacPort?) -> String {
         var parts = [d.isBuiltin ? "内建" : "外接"]
         if !isOn {
             parts.append("已关闭")
-        } else if let mode = service.currentMode(d.id) {
-            parts.append(modeText(mode))
+        } else {
+            if !d.isBuiltin, let port { parts.append(macPortLabel(port)) }
+            if let mode = service.currentMode(d.id) { parts.append(modeText(mode)) }
         }
         return parts.joined(separator: " · ")
     }

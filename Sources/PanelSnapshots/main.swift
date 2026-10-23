@@ -37,6 +37,10 @@ final class DemoDisplayService: SystemDisplayService {
         return id == 1 ? DisplayMode(pixelWidth: 3024, pixelHeight: 1964, refreshRate: 120)
                        : DisplayMode(pixelWidth: 3840, pixelHeight: 2160, refreshRate: 60)
     }
+    /// 两块外接屏经拓展坞接在 1 号雷雳口(与真机常见接法一致),说明行写「外接 · 雷雳 1」。
+    func macPorts() -> [CGDirectDisplayID: MacPort] {
+        Dictionary(uniqueKeysWithValues: [2, 3].filter { !off.contains($0) }.map { ($0, MacPort.thunderbolt(1)) })
+    }
     func observeDisplayDisconnect(_ handler: @escaping (DisplayDisconnectSignal) -> Void) {}
     func inactiveDisplayIDs() -> [CGDirectDisplayID]? { off.sorted() }
     func isClamshellClosed() -> Bool? { false }
