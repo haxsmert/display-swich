@@ -106,7 +106,7 @@ try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories:
 
 let service = DemoDisplayService()
 let controller = DisplayController(service: service)
-let model = PanelModel(controller: controller, lastRescueProvider: { nil }, version: "1.0.20", driverHealth: .normal)
+let model = PanelModel(controller: controller, lastRescueProvider: { nil }, version: "1.0.21", driverHealth: .normal)
 
 // ① 全部亮着
 model.reload()
