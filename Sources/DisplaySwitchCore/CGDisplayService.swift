@@ -117,8 +117,8 @@ public final class CGDisplayService: SystemDisplayService {
     }
 
     /// 见协议注释。三步,任何一步拿不到就少写或不写,不猜:
-    /// ① 每块亮着的外接屏由哪个显示控制器输出(CoreDisplay 私有符号给的设备树位置里的 `dispextN`);
-    /// ② 显示交换器把各控制器路由到哪条下游通路(交换器驱动的 `current-state`);
+    /// ① 每块亮着的外接屏由哪个显示控制器输出(CoreDisplay 私有符号给的设备树位置里的 `disp0` / `dispextN`);
+    /// ② 显示交换器把各上游口路由到哪条下游通路(交换器驱动的 `current-state`),上游口是哪个协处理器(节点上的 `role`);
     /// ③ 那条通路属于机身哪个口(通路节点上的 `port-type` / `port-number` / `transport-tunneled`)。
     public func macPorts() -> [CGDirectDisplayID: MacPort] {
         guard let info = Self.displayInfoDictionary else { return [:] }
@@ -145,22 +145,32 @@ public final class CGDisplayService: SystemDisplayService {
         return unsafeBitCast(symbol, to: DisplayInfoFunction.self)
     }()
 
-    /// 读显示交换器:各交换器驱动(`AppleDisplayCrossbar` 的子类)的当前路由、它上游的控制器名单,
-    /// 加上所有下游通路的属性(挂在每个 `IODPPortService` 上方的设备节点上)。
+    /// 读显示交换器:两侧所有口(都是 `IODPTXPort` 的子类,内核按它们登记交换器的口)各自声明的地址,
+    /// 加上各交换器驱动(`AppleDisplayCrossbar` 的子类)的当前路由。
     private static func macPortsByDisplayController() -> [String: MacPort] {
+        var ufps: [CrossbarUFP] = []
         var dfps: [CrossbarDFP] = []
-        forEachService(matching: "IODPPortService") { svc in
+        forEachService(matching: "IODPTXPort") { port in
+            guard let node = switchPortNode(of: port) else { return }
+            defer { IOObjectRelease(node) }
+            func data(_ key: String) -> Data? {
+                IORegistryEntryCreateCFProperty(node, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Data
+            }
             func number(_ key: String) -> Int? {
-                guard let data = IORegistryEntrySearchCFProperty(svc, kIOServicePlane, key as CFString, kCFAllocatorDefault,
-                                                                 IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)) as? Data,
-                      data.count >= 4 else { return nil }
+                guard let data = data(key), data.count >= 4 else { return nil }
                 return Int(data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
             }
-            guard let crossbar = number("dp-switch-parent"), let domain = number("dp-switch-dfp-domain"),
-                  let endpoint = number("dp-switch-dfp-endpoint"), let port = number("dp-switch-dfp-port"),
-                  let type = number("port-type"), let portNumber = number("port-number") else { return }
-            dfps.append(CrossbarDFP(crossbar: crossbar, domain: domain, endpoint: endpoint, port: port, portType: type,
-                                    portNumber: portNumber, tunneled: (number("transport-tunneled") ?? 0) != 0))
+            guard let crossbar = number("dp-switch-parent") else { return }
+            // 下游通路写着端口类型,上游的协处理器写着 role;地址没写的按 0(内核的规矩,见 MacPort.swift)。
+            if let type = number("port-type") {
+                guard let portNumber = number("port-number") else { return }
+                dfps.append(CrossbarDFP(crossbar: crossbar, domain: number("dp-switch-dfp-domain") ?? 0,
+                                        endpoint: number("dp-switch-dfp-endpoint") ?? 0, port: number("dp-switch-dfp-port") ?? 0,
+                                        portType: type, portNumber: portNumber, tunneled: (number("transport-tunneled") ?? 0) != 0))
+            } else if let role = data("role").map({ String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }) {
+                ufps.append(CrossbarUFP(crossbar: crossbar, domain: number("dp-switch-ufp-domain") ?? 0,
+                                        endpoint: number("dp-switch-ufp-endpoint") ?? 0, role: role))
+            }
         }
         var result: [String: MacPort] = [:]
         forEachService(matching: "AppleDisplayCrossbar") { crossbar in
@@ -169,13 +179,29 @@ public final class CGDisplayService: SystemDisplayService {
             var parent: io_registry_entry_t = 0
             guard IORegistryEntryGetParentEntry(crossbar, kIOServicePlane, &parent) == KERN_SUCCESS else { return }
             defer { IOObjectRelease(parent) }
-            let deviceProps = properties(of: parent)
-            guard let names = (deviceProps["ufp-endpoints"] as? Data).map(crossbarEndpointNames),
-                  let handle = deviceProps["AAPL,phandle"] as? Data, handle.count >= 4 else { return }
+            guard let handle = properties(of: parent)["AAPL,phandle"] as? Data, handle.count >= 4 else { return }
             let crossbarID = Int(handle.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
-            result.merge(macPortsByController(routes: routes, ufpEndpoints: names, crossbar: crossbarID, dfps: dfps)) { first, _ in first }
+            result.merge(macPortsByController(routes: routes, crossbar: crossbarID, ufps: ufps, dfps: dfps)) { first, _ in first }
         }
         return result
+    }
+
+    /// 一个交换器端口在设备树里的声明节点:从端口驱动往上找,第一个写着 `dp-switch-parent` 的节点
+    /// (下游如 `dptx-phy`、`atc0-dpin0`,上游是协处理器 `dcp`、`dcpext0`)。地址只从这一个节点读:
+    /// 没写的键按 0,不去更上层的节点上找——那里的同名键不是这个口的。
+    private static func switchPortNode(of port: io_object_t) -> io_registry_entry_t? {
+        var entry = port
+        IOObjectRetain(entry)
+        while true {
+            if IORegistryEntryCreateCFProperty(entry, "dp-switch-parent" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() != nil {
+                return entry
+            }
+            var parent: io_registry_entry_t = 0
+            let ret = IORegistryEntryGetParentEntry(entry, kIOServicePlane, &parent)
+            IOObjectRelease(entry)
+            guard ret == KERN_SUCCESS else { return nil }
+            entry = parent
+        }
     }
 
     private static func forEachService(matching className: String, _ body: (io_object_t) -> Void) {

@@ -21,20 +21,31 @@ public func macPortLabel(_ port: MacPort) -> String {
 
 // MARK: - 从系统的显示交换器读出「哪块屏走哪个口」
 //
-// Apple Silicon 上,每块外接屏由一个显示控制器(设备树里的 `dispext0`、`dispext1`……)输出,
-// 再经显示交换器(`display-crossbar0`)路由到某个机身端口的某条通路(`atc0` 的直连口,或它的几条雷雳隧道)。
-// 交换器驱动的 `current-state` 记着当前路由,形如 `0:ufp0,0-dfp0,1`:上游第 0 个(`ufp-endpoints` 里的
-// `dispext0`)接到下游第 0 个端点的 1 号口。下游每条通路的节点上写着 `port-type`(2 = USB-C,6 = HDMI)、
-// `port-number`(机身端口号)与 `transport-tunneled`(是不是雷雳隧道)。2026-10-23 在他的机器上逐项核对过:
-// 两块同型号屏分别是 `0:ufp0,0-dfp0,1` 与 `0:ufp1,0-dfp0,2`,即 1 号口的两条雷雳隧道,
-// 与端口传输节点(`Port-USB-C@1/CIO/DisplayPort@0/1`)、系统信息(Receptacle 1 上接着拓展坞)一致。
+// Apple Silicon 上,每块外接屏由一个显示控制器(设备树里的 `disp0`、`dispext0`……)输出,它背后的显示协处理器
+// (`dcp`、`dcpext0`……)接在显示交换器(`display-crossbar0`)的一个上游口上;交换器再把上游口路由到某个机身端口的
+// 某条通路(`atc0` 的直连口、它的几条雷雳隧道,或 HDMI 的 `dptx-phy`)。交换器驱动的 `current-state` 记着当前路由,
+// 形如 `0:ufp0,0-dfp4,0`:第 0 域里,上游 0 号口接到下游 4 号端点的 0 号通路。
+// 两侧每个口都在自己的设备树节点上声明地址:`dp-switch-parent`(属于哪个交换器)加 `dp-switch-ufp-*` / `dp-switch-dfp-*`
+// 的 domain、endpoint、port,**没写的按 0**——这是内核的规矩(`IODPTXPort` 的 `getAddressPropertyWithProvider`:
+// 「not specified; defaulting to 0」),不是我们补的:Mac mini M4 上所有节点都没写 domain,HDMI 的 `dptx-phy` 也没写 port。
+// 上游口的节点是显示协处理器,写着 `role`(`DCP`、`DCPEXT0`……);下游通路的节点写着 `port-type`(2 = USB-C,6 = HDMI)、
+// `port-number`(机身端口号)与 `transport-tunneled`(是不是雷雳隧道)。
+//
+// 两处曾经的误读,2026-10-23 在 Mac mini M4(机身 HDMI 接一块屏)上查清:
+// ① 上游口编号**不是**交换器 `ufp-endpoints` 名单里的序号。那份名单只是交换器给槽位贴的标签(驱动日志也照它打
+//   `dispext%u`):Mac mini M4 上名单第 0 个叫 `dispext0`,真正接在 0 号口的却是主协处理器 `dcp`,`dcpext0` 在 1 号口。
+//   按名单对,HDMI 上的屏就对不上。他的 MacBook 上两块屏都走 1 号雷雳口,名单与协处理器即便错位也看不出来。
+// ② 外接屏不一定由 `dispextN` 输出:没有内建屏的 Mac mini,机身 HDMI 由主协处理器 `dcp` 经 `disp0` 输出。
+// 协处理器与显示控制器按 `role` 对:`DCP` → `disp0`,`DCPEXTn` → `dispextn`。各协处理器固件端点的名字印证了这一点
+// (`dcpext0` 下的端点都叫 `dispext0:…`,`dcp` 下有 `disp0:…`);连接管理器(`AppleDisplayConnectionManager`)的
+// `ConnectionMapping` 也写着 `role=DCP、Address=0.4.0`,与这条链读出的结果一致。
 // 这条链按显示控制器对应,**同型号、EDID 完全相同的两块屏也不会对错**——EDID 对不上是哪块,曾是不写接法的原因。
 // 都是系统未写成文档的数据,解析不了就不写,不猜。
 
 /// 交换器里的一条路由。
 struct CrossbarRoute: Equatable {
     let domain: Int
-    /// 上游序号:交换器 `ufp-endpoints` 里的第几个(如 `dispext0`)。
+    /// 上游口编号(对应协处理器节点的 `dp-switch-ufp-endpoint`)。
     let ufp: Int
     /// 下游端点序号(对应下游节点的 `dp-switch-dfp-endpoint`)。
     let dfpEndpoint: Int
@@ -52,10 +63,20 @@ func parseCrossbarRoute(_ text: String) -> CrossbarRoute? {
     return CrossbarRoute(domain: domain, ufp: ufp, dfpEndpoint: endpoint, dfpPort: port)
 }
 
-/// 交换器下游的一条通路(设备树里 `atc0-dpphy`、`atc0-dpin0` 这类节点上的属性)。
+/// 交换器上游的一个口:一个显示协处理器(设备树里 `dcp`、`dcpext0` 这类节点上的属性)。
+struct CrossbarUFP: Equatable {
+    /// 属于哪个交换器:节点的 `dp-switch-parent`,同 `CrossbarDFP.crossbar`。
+    let crossbar: Int
+    let domain: Int
+    let endpoint: Int
+    /// 协处理器的 `role`,如 `DCP`、`DCPEXT0`。
+    let role: String
+}
+
+/// 交换器下游的一条通路(设备树里 `atc0-dpphy`、`atc0-dpin0`、`dptx-phy` 这类节点上的属性)。
 struct CrossbarDFP: Equatable {
-    /// 属于哪个交换器:节点的 `dp-switch-parent`,等于那个交换器节点的 `AAPL,phandle`(实测 `1a010000`)。
-    /// 有不止一个交换器的机器(如 Ultra)上,各交换器的下游编号会重叠,必须先按它分开。
+    /// 属于哪个交换器:节点的 `dp-switch-parent`,等于那个交换器节点的 `AAPL,phandle`(实测 `1a010000`、`b9000000`)。
+    /// 有不止一个交换器的机器(如 Ultra)上,各交换器的上下游编号会重叠,必须先按它分开。
     let crossbar: Int
     let domain: Int
     let endpoint: Int
@@ -80,31 +101,36 @@ func macPort(of dfp: CrossbarDFP, among all: [CrossbarDFP]) -> MacPort? {
     }
 }
 
-/// 把一个交换器的路由翻成「显示控制器名 → 机身端口」,如 `["dispext0": .thunderbolt(1)]`。
-/// 只在这个交换器自己的下游通路里找;某条路由对不上上游名字或下游通路,就跳过那一条。
-func macPortsByController(routes: [String], ufpEndpoints: [String], crossbar: Int, dfps allDFPs: [CrossbarDFP]) -> [String: MacPort] {
+/// 把一个交换器的路由翻成「显示控制器名 → 机身端口」,如 `["dispext0": .thunderbolt(1)]`、`["disp0": .hdmi(1)]`。
+/// 只在这个交换器自己的上下游口里找;某条路由对不上上游协处理器或下游通路,就跳过那一条。
+/// 上游只按域和口对,不看口内的 port:那是协处理器的第几条输出管线,换一条也还是同一个控制器。
+func macPortsByController(routes: [String], crossbar: Int, ufps allUFPs: [CrossbarUFP], dfps allDFPs: [CrossbarDFP]) -> [String: MacPort] {
+    let ufps = allUFPs.filter { $0.crossbar == crossbar }
     let dfps = allDFPs.filter { $0.crossbar == crossbar }
     var result: [String: MacPort] = [:]
     for text in routes {
-        guard let r = parseCrossbarRoute(text), ufpEndpoints.indices.contains(r.ufp),
+        guard let r = parseCrossbarRoute(text),
+              let ufp = ufps.first(where: { $0.domain == r.domain && $0.endpoint == r.ufp }),
+              let controller = displayController(forRole: ufp.role),
               let dfp = dfps.first(where: { $0.domain == r.domain && $0.endpoint == r.dfpEndpoint && $0.port == r.dfpPort }),
               let port = macPort(of: dfp, among: dfps) else { continue }
-        result[ufpEndpoints[r.ufp]] = port
+        result[controller] = port
     }
     return result
 }
 
-/// 交换器的上游名单:一串以 0 结尾的名字,"dispext0\0dispext1\0…"。保留中间的空项——
-/// 路由按序号引用名单,跳过空项会让后面的序号整体错位。
-func crossbarEndpointNames(_ data: Data) -> [String] {
-    var parts = data.split(separator: 0, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
-    if parts.last == "" { parts.removeLast() }
-    return parts
+/// 协处理器的 `role` → 它输出的显示控制器名:`DCP` → `disp0`,`DCPEXTn` → `dispextn`;别的不认。
+func displayController(forRole role: String) -> String? {
+    if role == "DCP" { return "disp0" }
+    let n = role.dropFirst("DCPEXT".count)
+    guard role.hasPrefix("DCPEXT"), !n.isEmpty, n.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+    return "dispext\(n)"
 }
 
-/// 从 CoreDisplay 给的设备树位置里取出显示控制器名,如 `…/dispext0@B0000000/…` → `dispext0`。
+/// 从 CoreDisplay 给的设备树位置里取出显示控制器名,如 `…/dispext0@B0000000/…` → `dispext0`、
+/// `…/disp0@8000000/…` → `disp0`(Mac mini 的机身 HDMI)。
 func displayController(inLocation location: String) -> String? {
-    guard let regex = try? NSRegularExpression(pattern: #"(dispext\d+)"#),
+    guard let regex = try? NSRegularExpression(pattern: #"/(disp(?:ext)?\d+)@"#),
           let m = regex.firstMatch(in: location, range: NSRange(location.startIndex..., in: location)) else { return nil }
     return (location as NSString).substring(with: m.range(at: 1))
 }
