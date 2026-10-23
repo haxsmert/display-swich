@@ -21,6 +21,8 @@ Mac mini M4(2026-10-23 起,`t8132`,无内建屏,机身 HDMI 由主协处理器 `
 2. 对应关系类功能(哪块屏 ↔ 哪个口 / 哪个控制器)用能区分对错的布置验证:两块屏插**不同**的口;只插同一个口的结果不作数。
 3. 两种机型各留一份原样夹具进测试:Mac mini 的已在 `MacPortTests.swift`,MacBook 的上游口编号待补抄。
 4. 拔线通知等安全相关机制同理:Mac mini 机身 HDMI 走 `dptx-phy` + DP 转 HDMI 芯片,与 MacBook 的 HDMI 硬件路径不同,
-   在 Mac mini 上跑 `bash scripts/selfcheck.sh --plug` 拔一次 HDMI 之前,不能说「已验证」。
+   要在 Mac mini 上单独验。2026-10-23 已验(一块屏、三轮拔插、等 10 / 2 / 3 秒):每次拔出都来「节点重新登记」通知,
+   到达时物理外接屏数已是 0;睡眠判断一直是 false(CoreGraphics 拔线期间仍报那块屏在线,是陈旧值,方向安全);
+   插回后口重新读出 HDMI。**两块屏、关一块再拔另一块的完整救援仍未在 Mac mini 上跑过。**
 
 参见 [[displayswitch-real-usage-dock-workflow]]、[[release-needs-real-machine-acceptance]]、[[probabilistic-bugs-need-many-varied-trials]]。
