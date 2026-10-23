@@ -126,22 +126,21 @@ public final class DisplayController {
         let ordered = byID.values.sorted {
             (baseName($0.name), identityKey(of: $0), $0.uuid, $0.id) < (baseName($1.name), identityKey(of: $1), $1.uuid, $1.id)
         }
-        // 整组(活跃+已关闭)一起算:同型号屏的序列号尾号,与同名几块(决定预留宽度)。
-        let tails = serialTails(for: ordered)
-        var sameName: [String: Int] = [:]
-        for d in ordered { sameName[baseName(d.name), default: 0] += 1 }
+        // 整组(活跃+已关闭)一起算:名字、预留宽度、同型号屏的序列号尾号。
+        let names = displayNames(for: ordered)
         let fallback = builtInFallbackAvailable()
         let ports = service.macPorts()
         return ordered.map { d in
             let on = disabled[d.id] == nil
             let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
-            let label = displayLabel(for: d)
-            let detail = detailLine(for: d, isOn: on, port: ports[d.id], serialTail: tails[d.id])
+            let name = names[d.id]
+            let label = name?.label ?? displayLabel(for: d)
+            let detail = detailLine(for: d, isOn: on, port: ports[d.id], serialTail: name?.serialTail)
             if on { knownLitDetails[key(of: d)] = detail }
             return DisplayMenuItem(id: d.id, label: label, isOn: on, canToggleOff: canOff,
                                    isBuiltin: d.isBuiltin, detail: detail,
                                    lockReason: (service.isSupported && on && !canOff) ? lockReason : nil,
-                                   sizingLabel: sizingLabel(for: d, sameNameCount: sameName[baseName(d.name)] ?? 1),
+                                   sizingLabel: name?.sizingLabel ?? label + mainMarker,
                                    sizingDetail: knownLitDetails[key(of: d)] ?? detail)
         }
     }

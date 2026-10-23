@@ -20,24 +20,40 @@ func labelBuiltinMain() {
 func labelEmpty() {
     #expect(displayLabel(for: makeInfo(id: 1, name: "")) == "显示器")
 }
-@Test("照抄系统的叫法:系统给同名屏加的 (N) 原样保留")
-func labelKeepsSystemSuffix() {
-    #expect(displayLabel(for: makeInfo(id: 1, name: "External Display (2)")) == "External Display (2)")
-    #expect(displayLabel(for: makeInfo(id: 1, main: true, name: "External Display (1)")) == "External Display (1)（主）")
+@Test("去掉系统给同名屏加的 (N):写显示器自己的名字")
+func labelStripsSystemSuffix() {
+    #expect(displayLabel(for: makeInfo(id: 1, name: "External Display (2)")) == "External Display")
+    #expect(displayLabel(for: makeInfo(id: 1, main: true, name: "External Display (1)")) == "External Display（主）")
 }
 
-// MARK: 预留宽度 sizingLabel
+// MARK: 整组写法 displayNames
 
-@Test("同名两块:系统随时可能加上或去掉 (N),按带最大号的写法预留,并带(主)")
-func sizingCoversSystemSuffix() {
-    #expect(sizingLabel(for: makeInfo(id: 1, name: "External Display"), sameNameCount: 2) == "External Display (2)（主）")
-    #expect(sizingLabel(for: makeInfo(id: 1, name: "External Display (1)"), sameNameCount: 2) == "External Display (2)（主）")
+@Test("同型号两块都有序列号:都写显示器自己的名字,靠尾号分清;按名字 +(主)预留宽度")
+func namesForSameModelWithSerials() {
+    let names = displayNames(for: [makeInfo(id: 2, main: true, name: "External Display (1)", serial: "SN-0007"),
+                                   makeInfo(id: 4, active: false, name: "External Display (2)", serial: "SN-0002")])
+    #expect(names[2] == DisplayNames(label: "External Display（主）", sizingLabel: "External Display（主）", serialTail: "…0007"))
+    #expect(names[4] == DisplayNames(label: "External Display", sizingLabel: "External Display（主）", serialTail: "…0002"))
 }
-@Test("同名只剩一块:名字里还带着号(关掉前的叫法)就照它预留;不带号就是名字 +(主)")
-func sizingForLoneDisplay() {
-    #expect(sizingLabel(for: makeInfo(id: 1, name: "External Display (2)"), sameNameCount: 1) == "External Display (2)（主）")
-    #expect(sizingLabel(for: makeInfo(id: 1, name: "Built-in Retina Display"), sameNameCount: 1) == "Built-in Retina Display（主）")
-    #expect(sizingLabel(for: makeInfo(id: 1, name: ""), sameNameCount: 1) == "显示器（主）")
+@Test("同型号却读不到序列号:没有尾号可看,只好照抄系统的叫法;系统随时可能加号去号,按带最大号预留")
+func namesFallBackToSystemWithoutSerials() {
+    let names = displayNames(for: [makeInfo(id: 2, name: "External Display (1)"), makeInfo(id: 4, name: "External Display")])
+    #expect(names[2] == DisplayNames(label: "External Display (1)", sizingLabel: "External Display (2)（主）", serialTail: nil))
+    #expect(names[4] == DisplayNames(label: "External Display", sizingLabel: "External Display (2)（主）", serialTail: nil))
+}
+@Test("同型号只有一块读得到序列号:它写名字 + 尾号,另一块照抄系统的叫法")
+func namesMixedSerials() {
+    let names = displayNames(for: [makeInfo(id: 2, name: "External Display (1)", serial: "SN-0007"),
+                                   makeInfo(id: 4, name: "External Display (2)")])
+    #expect(names[2]?.label == "External Display" && names[2]?.serialTail == "…0007")
+    #expect(names[4]?.label == "External Display (2)" && names[4]?.serialTail == nil)
+}
+@Test("名字独一无二:写名字,不写尾号;关掉前带着的旧号也去掉")
+func namesForUniqueDisplays() {
+    let names = displayNames(for: [makeInfo(id: 1, builtin: true, main: true, name: "Built-in Retina Display", serial: "PANEL1"),
+                                   makeInfo(id: 2, active: false, name: "External Display (2)", serial: "SN-0002")])
+    #expect(names[1] == DisplayNames(label: "Built-in Retina Display（主）", sizingLabel: "Built-in Retina Display（主）", serialTail: nil))
+    #expect(names[2] == DisplayNames(label: "External Display", sizingLabel: "External Display（主）", serialTail: nil))
 }
 
 // MARK: 序列号尾号 serialTails
@@ -63,6 +79,7 @@ func tailsOnlyWhenNeeded() {
     // 同名三块里只有两块读得到序列号:只给这两块写
     #expect(serialTails(for: [makeInfo(id: 1, serial: "SN-0001"), makeInfo(id: 2, serial: "SN-0002"), makeInfo(id: 3)])
             == [1: "…0001", 2: "…0002"])
+    #expect(serialTails(for: [makeInfo(id: 1, serial: "SN-0001"), makeInfo(id: 2)]) == [1: "…0001"])   // 一块有、一块没有
 }
 @Test("尾号按基名分组:系统名带不带 (N) 都算同一型号")
 func tailsGroupByBaseName() {

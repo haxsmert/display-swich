@@ -207,7 +207,7 @@ func menuItemsMergeActiveAndDisabled() {
     #expect(items.first { $0.id == 3 }?.isOn == false)
 }
 
-@Test("同型号两块屏:名字照系统的叫法,行按序列号排,说明行写尾号;关掉其一行不挪、尾号照写")
+@Test("同型号两块屏:写显示器自己的名字,行按序列号排,说明行写尾号;关掉其一行不挪、尾号照写")
 func sameModelRowsBySerialWithSystemNames() {
     // 系统的 (1)(2) 与序列号顺序相反:id 2 系统叫 (1),序列号却更大。
     let svc = MockService(all: [makeInfo(id: 2, main: true, x: 0, name: "External Display (1)", uuid: "uuid-a", serial: "SN-0007"),
@@ -215,9 +215,9 @@ func sameModelRowsBySerialWithSystemNames() {
     let ctrl = DisplayController(service: svc)
     let items = ctrl.menuItems()
     #expect(items.map(\.id) == [4, 2])
-    #expect(items.map(\.label) == ["External Display (2)", "External Display (1)（主）"])
+    #expect(items.map(\.label) == ["External Display", "External Display（主）"])
     #expect(items.map(\.detail) == ["外接 · 序列号 …0002", "外接 · 序列号 …0007"])
-    #expect(items.map(\.sizingLabel) == ["External Display (2)（主）", "External Display (2)（主）"])
+    #expect(items.map(\.sizingLabel) == ["External Display（主）", "External Display（主）"])
     _ = ctrl.toggle(id: 4)
     let off = ctrl.menuItems()
     #expect(off.map(\.id) == [4, 2])
@@ -1039,15 +1039,15 @@ func revivalSkippedWhenSymbolMissing() {
     #expect(svc.setCalls.isEmpty)
 }
 
-@Test("同型号两块屏:关掉其一后,它沿用关掉前系统的叫法——系统枚举已不知道它叫什么,全靠记账里的快照")
-func closedDisplayKeepsSystemNameViaBookkeeping() {
-    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "External Display (1)"),
-                                makeInfo(id: 5, x: 1920, name: "External Display (2)")])
+@Test("同型号两块屏关掉其一:系统枚举已不知道它叫什么,名字与尾号全靠记账里的快照")
+func closedDisplayKeepsNameViaBookkeeping() {
+    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "External Display (1)", serial: "SN-0004"),
+                                makeInfo(id: 5, x: 1920, name: "External Display (2)", serial: "SN-0005")])
     let ctrl = DisplayController(service: svc)
     _ = ctrl.toggle(id: 4)                                  // 关掉其中一块
-    let after = ctrl.menuItems()
-    #expect(after.first { $0.id == 4 }?.label == "External Display (1)")
-    #expect(after.first { $0.id == 5 }?.label == "External Display (2)")
+    let closed = ctrl.menuItems().first { $0.id == 4 }
+    #expect(closed?.label == "External Display")
+    #expect(closed?.detail == "外接 · 序列号 …0004 · 已关闭")
 }
 
 

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// 去掉系统名末尾的 " (N)" 消歧后缀,得到基名。只用于分组(哪些屏同型号)与预留宽度,不用于显示。
+/// 去掉系统名末尾的 " (N)" 消歧后缀,得到基名(显示器自己报的名字,如 `Mi Monitor`)。
 func baseName(_ name: String) -> String {
     let stripped = name.replacingOccurrences(
         of: #"\s*\(\d+\)$"#, with: "", options: .regularExpression)
@@ -17,25 +17,45 @@ func systemNumber(in name: String) -> Int? {
 /// 标签末尾的主屏标记。
 let mainMarker = "（主）"
 
-/// 一块屏的标签:照抄系统的叫法,包括系统给同名屏加的 (1)(2);主屏额外加(主)。
-///
-/// 为什么不自己编号(他的决定,2026-10-23):面板与系统设置里的名字要对得上。系统的 (1)(2) 跟着接法走——
-/// 换个口、关掉同名的另一块,号都可能变或消失——但这是系统的叫法,我们改不了:系统设置里没有改名入口,
-/// 显示器覆盖文件只能按厂商 + 型号改,同型号的两台会被改成同一个名字。自己编一套稳定的号,就会和系统设置对不上。
-/// 分清是哪一台靠两样:行的顺序按显示器身份排(`identityKey(of:)`,不随系统改号而跳),
-/// 说明行写序列号尾号(`serialTails(for:)`)。
+/// 单块屏的标签:显示器自己的名字(去掉系统的 (N))+ 主屏标记。
 public func displayLabel(for display: DisplayInfo) -> String {
-    let name = display.name.isEmpty ? "显示器" : display.name
-    return display.isMain ? name + mainMarker : name
+    let base = baseName(display.name)
+    return display.isMain ? base + mainMarker : base
 }
 
-/// 标签可能出现的最长写法,界面按它预留宽度(他不要开关屏时面板变宽)。
-/// 同名屏不止一块、或名字已带系统的号时,系统随时可能加上或去掉 (N),按带号写;
-/// 任何亮着的屏都可能成为主屏,都带主屏标记。
-func sizingLabel(for display: DisplayInfo, sameNameCount: Int) -> String {
-    let number = max(systemNumber(in: display.name) ?? 0, sameNameCount)
-    let name = number > 1 ? "\(baseName(display.name)) (\(number))" : (display.name.isEmpty ? "显示器" : display.name)
-    return name + mainMarker
+/// 一块屏在面板上的写法。
+struct DisplayNames: Equatable {
+    let label: String
+    /// 标签可能出现的最长写法,界面按它预留宽度(他不要开关屏时面板变宽);任何亮着的屏都可能成为主屏,都带主屏标记。
+    let sizingLabel: String
+    /// 序列号尾号,同型号屏才有,写进说明行。
+    let serialTail: String?
+}
+
+/// 整组屏(活跃 + 已关闭)每块的写法:名字用显示器自己的名字,同型号屏靠序列号尾号分清(他的决定,2026-10-23)。
+///
+/// 系统给同名屏加的 (1)(2) 不用:它跟着接法走,换个口、关掉同名的另一块,号就变或消失;有了序列号尾号它就没有用处。
+/// 也不自己编号:自编的号与系统设置对不上(试过,他否了)。唯一的例外是**读不到序列号**的同型号屏——没有尾号可看,
+/// 只好照抄系统的叫法,至少此刻分得开。行的顺序按显示器身份排(`identityKey(of:)`),见 `DisplayController.menuItems`。
+func displayNames(for displays: [DisplayInfo]) -> [CGDirectDisplayID: DisplayNames] {
+    let tails = serialTails(for: displays)
+    var sameName: [String: Int] = [:]
+    for d in displays { sameName[baseName(d.name), default: 0] += 1 }
+    var result: [CGDirectDisplayID: DisplayNames] = [:]
+    for d in displays {
+        let base = baseName(d.name)
+        let count = sameName[base] ?? 1
+        let tail = tails[d.id]
+        if count > 1 && tail == nil {
+            let name = d.name.isEmpty ? base : d.name
+            let widest = max(count, systemNumber(in: d.name) ?? 0)
+            result[d.id] = DisplayNames(label: d.isMain ? name + mainMarker : name,
+                                        sizingLabel: "\(base) (\(widest))" + mainMarker, serialTail: nil)
+        } else {
+            result[d.id] = DisplayNames(label: displayLabel(for: d), sizingLabel: base + mainMarker, serialTail: tail)
+        }
+    }
+    return result
 }
 
 /// 同名屏之间排序用的身份:有序列号文本就用它,没有才用系统的 UUID。
@@ -48,13 +68,15 @@ func identityKey(of d: DisplayInfo) -> String {
 }
 
 /// 同型号屏的序列号尾号,写进说明行,让人分得清是哪一台(他的提议,2026-10-23:「把唯一码放出来」)。
-/// 只给基名相同、不止一块、且读得到序列号的屏;取末 4 位,同组里撞了就加长到能分开为止。
+/// 只给基名相同、不止一块的屏里读得到序列号的那些;取末 4 位,同组里撞了就加长到能分开为止。
 /// 只露尾号:完整序列号是设备标识,不必整串出现在截图里。
 func serialTails(for displays: [DisplayInfo]) -> [CGDirectDisplayID: String] {
     var groups: [String: [DisplayInfo]] = [:]
-    for d in displays where !d.serial.isEmpty { groups[baseName(d.name), default: []].append(d) }
+    for d in displays { groups[baseName(d.name), default: []].append(d) }
     var tails: [CGDirectDisplayID: String] = [:]
-    for members in groups.values where members.count > 1 {
+    for group in groups.values where group.count > 1 {
+        let members = group.filter { !$0.serial.isEmpty }
+        guard !members.isEmpty else { continue }
         let longest = members.map(\.serial.count).max() ?? 0
         var length = min(4, longest)
         while length < longest, Set(members.map { $0.serial.suffix(length) }).count < members.count { length += 1 }

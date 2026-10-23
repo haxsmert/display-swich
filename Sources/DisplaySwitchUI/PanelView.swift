@@ -222,7 +222,9 @@ private struct DisplayRow: View {
                     .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                 }
                 .lineLimit(1)
-                Spacer(minLength: 12)
+                // 文字列撑满,锁靠右;锁平时透明但一直占位(锁出现时面板不变宽)。最长那行的文字与锁只隔行内统一的 8pt——
+                // 曾在中间垫一个至少 12pt 的空白,加上两侧间距共 28pt,面板右边空出一大块(他指出「右边那么多空白干什么」)。
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "lock.fill")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
