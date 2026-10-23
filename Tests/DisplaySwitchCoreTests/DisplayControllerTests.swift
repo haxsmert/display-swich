@@ -207,16 +207,21 @@ func menuItemsMergeActiveAndDisabled() {
     #expect(items.first { $0.id == 3 }?.isOn == false)
 }
 
-@Test("同型号两块屏按序列号排序、编号;关掉其一,它的号也跟着序列号不变")
-func menuItemsOrderAndNumberBySerial() {
-    // UUID 顺序与序列号顺序相反:id 2 的 uuid 小、序列号大。
-    let svc = MockService(all: [makeInfo(id: 2, main: true, x: 0, uuid: "uuid-a", serial: "SN-7"),
-                                makeInfo(id: 4, x: 1920, uuid: "uuid-z", serial: "SN-2")])
+@Test("同型号两块屏:名字照系统的叫法,行按序列号排,说明行写尾号;关掉其一行不挪、尾号照写")
+func sameModelRowsBySerialWithSystemNames() {
+    // 系统的 (1)(2) 与序列号顺序相反:id 2 系统叫 (1),序列号却更大。
+    let svc = MockService(all: [makeInfo(id: 2, main: true, x: 0, name: "External Display (1)", uuid: "uuid-a", serial: "SN-0007"),
+                                makeInfo(id: 4, x: 1920, name: "External Display (2)", uuid: "uuid-z", serial: "SN-0002")])
     let ctrl = DisplayController(service: svc)
-    #expect(ctrl.menuItems().map(\.label) == ["External Display (1)", "External Display (2)（主）"])
-    #expect(ctrl.menuItems().map(\.id) == [4, 2])
+    let items = ctrl.menuItems()
+    #expect(items.map(\.id) == [4, 2])
+    #expect(items.map(\.label) == ["External Display (2)", "External Display (1)（主）"])
+    #expect(items.map(\.detail) == ["外接 · 序列号 …0002", "外接 · 序列号 …0007"])
+    #expect(items.map(\.sizingLabel) == ["External Display (2)（主）", "External Display (2)（主）"])
     _ = ctrl.toggle(id: 4)
-    #expect(ctrl.menuItems().map(\.label) == ["External Display (1)", "External Display (2)（主）"])
+    let off = ctrl.menuItems()
+    #expect(off.map(\.id) == [4, 2])
+    #expect(off.first?.detail == "外接 · 序列号 …0002 · 已关闭")
 }
 
 @Test("restoreAll 把所有已关闭的屏重新打开并清空")
@@ -1034,21 +1039,15 @@ func revivalSkippedWhenSymbolMissing() {
     #expect(svc.setCalls.isEmpty)
 }
 
-@Test("同型号两块屏:关掉其一后编号不漂移——这正是记账要留着的理由")
-func numberingStaysStableViaBookkeeping() {
-    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "External Display"),
-                                makeInfo(id: 5, x: 1920, name: "External Display")])
+@Test("同型号两块屏:关掉其一后,它沿用关掉前系统的叫法——系统枚举已不知道它叫什么,全靠记账里的快照")
+func closedDisplayKeepsSystemNameViaBookkeeping() {
+    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "External Display (1)"),
+                                makeInfo(id: 5, x: 1920, name: "External Display (2)")])
     let ctrl = DisplayController(service: svc)
-    let before = ctrl.menuItems()
-    let label4 = before.first { $0.id == 4 }?.label
-    let label5 = before.first { $0.id == 5 }?.label
-    #expect(label4 != nil && label4 != label5)              // 同名两块屏各有稳定编号
-
     _ = ctrl.toggle(id: 4)                                  // 关掉其中一块
     let after = ctrl.menuItems()
-    // 系统枚举不知道被关那块叫什么(UUID 都解析不出),编号全靠记账里的快照维持。
-    #expect(after.first { $0.id == 4 }?.label == label4)
-    #expect(after.first { $0.id == 5 }?.label == label5)
+    #expect(after.first { $0.id == 4 }?.label == "External Display (1)")
+    #expect(after.first { $0.id == 5 }?.label == "External Display (2)")
 }
 
 

@@ -122,37 +122,42 @@ public final class DisplayController {
                                      isMain: false, isBuiltin: d.isBuiltin, isActive: false, serial: d.serial)
         }
         for d in active { byID[d.id] = d }
-        // 按稳定键(基名+显示器身份)排序:同名屏相邻、与编号同序,不随位置、接口漂移。
+        // 按稳定键(基名+显示器身份)排序:同名屏相邻,不随位置、接口、系统改号而跳。
         let ordered = byID.values.sorted {
             (baseName($0.name), identityKey(of: $0), $0.uuid, $0.id) < (baseName($1.name), identityKey(of: $1), $1.uuid, $1.id)
         }
-        // 整组(活跃+已关闭)一起算标签:同名屏按显示器身份稳定编号,关掉其一不丢号、重开不漂移。
-        let labels = displayLabels(for: ordered)
+        // 整组(活跃+已关闭)一起算:同型号屏的序列号尾号,与同名几块(决定预留宽度)。
+        let tails = serialTails(for: ordered)
+        var sameName: [String: Int] = [:]
+        for d in ordered { sameName[baseName(d.name), default: 0] += 1 }
         let fallback = builtInFallbackAvailable()
         let ports = service.macPorts()
         return ordered.map { d in
             let on = disabled[d.id] == nil
             let canOff = (service.isSupported && on) ? canDisable(d, among: active, builtInFallback: fallback) : false
-            let label = labels[d.id] ?? displayLabel(for: d)
-            let detail = detailLine(for: d, isOn: on, port: ports[d.id])
+            let label = displayLabel(for: d)
+            let detail = detailLine(for: d, isOn: on, port: ports[d.id], serialTail: tails[d.id])
             if on { knownLitDetails[key(of: d)] = detail }
             return DisplayMenuItem(id: d.id, label: label, isOn: on, canToggleOff: canOff,
                                    isBuiltin: d.isBuiltin, detail: detail,
                                    lockReason: (service.isSupported && on && !canOff) ? lockReason : nil,
-                                   sizingLabel: label.hasSuffix(mainMarker) ? label : label + mainMarker,
+                                   sizingLabel: sizingLabel(for: d, sameNameCount: sameName[baseName(d.name)] ?? 1),
                                    sizingDetail: knownLitDetails[key(of: d)] ?? detail)
         }
     }
 
-    /// 说明行:内建 / 外接 → 接在 Mac 的哪个口(亮着的外接屏,查得到时)→ 分辨率与刷新率;关着的写「已关闭」。
-    /// 口只写电脑这一端,如「外接 · 雷雳 1 · 3840×2160 · 60Hz」,原因见 PanelText。
-    /// 关着的屏不写口:它的显示控制器已不再路由到任何口,查不到。
-    private func detailLine(for d: DisplayInfo, isOn: Bool, port: MacPort?) -> String {
+    /// 说明行:内建 / 外接 → 接在 Mac 的哪个口(亮着的外接屏,查得到时)→ 序列号尾号(同型号屏才有)
+    /// → 分辨率与刷新率;关着的写「已关闭」。如「外接 · 雷雳 3 · 序列号 …1A27 · 3840×2160 · 60Hz」。
+    /// 口只写电脑这一端,原因见 PanelText。关着的屏不写口:它的显示控制器已不再路由到任何口,查不到;
+    /// 尾号照写,关掉的是哪一台也要分得清。
+    private func detailLine(for d: DisplayInfo, isOn: Bool, port: MacPort?, serialTail: String?) -> String {
         var parts = [d.isBuiltin ? "内建" : "外接"]
         if !isOn {
+            if let serialTail { parts.append("序列号 " + serialTail) }
             parts.append("已关闭")
         } else {
             if !d.isBuiltin, let port { parts.append(macPortLabel(port)) }
+            if let serialTail { parts.append("序列号 " + serialTail) }
             if let mode = service.currentMode(d.id) { parts.append(modeText(mode)) }
         }
         return parts.joined(separator: " · ")

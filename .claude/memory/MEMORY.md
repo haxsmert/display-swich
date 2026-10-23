@@ -9,4 +9,4 @@
 - [照原生做要逐像素取证](compare-ui-against-native-by-pixels.md) — 白底垫窗 + 同玻璃候选对照;颜色只认截图;发 Esc 前先把焦点挪到桌面;动蓝牙设备先核对是哪一行
 - [概率型问题要变换条件多试](probabilistic-bugs-need-many-varied-trials.md) — 同条件试几次就说复现不出被他批评;变间隔跑几十轮、尽早上诊断版看他的记录
 - [同一系统、不同机型的硬件描述不同](hardware-description-differs-per-mac.md) — MacBook 与 Mac mini M4 设备树形态不同;读 IOKit 内部数据的功能两种机型都要核对,对应关系要插不同口验证
-- [同型号屏靠 EDID 序列号文本分清](same-model-displays-identity-is-edid-serial-text.md) — 数字序列号两台相同,UUID 与 display ID 随接法变;编号按序列号文本,序列号不进日志
+- [同型号屏靠 EDID 序列号文本分清](same-model-displays-identity-is-edid-serial-text.md) — 数字序列号两台相同,UUID 与 display ID 随接法变;名字照系统、行序与尾号按序列号文本,完整序列号不进日志

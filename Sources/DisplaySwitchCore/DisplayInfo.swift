@@ -24,7 +24,7 @@ public struct DisplayInfo: Equatable, Sendable {
     public let isActive: Bool
     /// 显示器自带的序列号文本(EDID 里的那一项),每台不同、换接口不变;没有就是空串。
     /// 同型号屏只能靠它分清是哪一台:系统的数字序列号两台可以相同,UUID 会随接法变(见 `identityKey(of:)`)。
-    /// 只用来排序编号,不写进日志、诊断或界面。
+    /// 用来排序,界面只写尾号(`serialTails(for:)`);不写进日志与诊断。
     public let serial: String
 
     public init(id: CGDirectDisplayID, uuid: String, name: String, bounds: CGRect,

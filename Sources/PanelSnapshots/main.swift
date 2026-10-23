@@ -15,18 +15,24 @@ final class DemoDisplayService: SystemDisplayService {
         DisplayInfo(id: 1, uuid: "demo-1", name: "Built-in Retina Display",
                     bounds: CGRect(x: 0, y: 0, width: 1512, height: 982), isMain: true, isBuiltin: true, isActive: true),
         DisplayInfo(id: 2, uuid: "demo-2", name: "External Display",
-                    bounds: CGRect(x: 1512, y: 0, width: 1920, height: 1080), isMain: false, isBuiltin: false, isActive: true),
+                    bounds: CGRect(x: 1512, y: 0, width: 1920, height: 1080), isMain: false, isBuiltin: false, isActive: true,
+                    serial: "DEMO00000042"),
         DisplayInfo(id: 3, uuid: "demo-3", name: "External Display",
-                    bounds: CGRect(x: 3432, y: 0, width: 1920, height: 1080), isMain: false, isBuiltin: false, isActive: true),
+                    bounds: CGRect(x: 3432, y: 0, width: 1920, height: 1080), isMain: false, isBuiltin: false, isActive: true,
+                    serial: "DEMO00000057"),
     ]
     private var off: Set<CGDirectDisplayID> = []
 
     var isSupported: Bool { true }
+    /// 屏名照系统的规矩:同名屏同时亮着不止一块时,系统给它们加 (1)(2);只剩一块亮着就去掉号。
     func activeDisplays() -> [DisplayInfo] {
-        let mainID = all.first { !off.contains($0.id) }?.id
-        return all.filter { !off.contains($0.id) }.map {
-            DisplayInfo(id: $0.id, uuid: $0.uuid, name: $0.name, bounds: $0.bounds,
-                        isMain: $0.id == mainID, isBuiltin: $0.isBuiltin, isActive: true)
+        let lit = all.filter { !off.contains($0.id) }
+        let mainID = lit.first?.id
+        return lit.map { d in
+            let twins = lit.filter { $0.name == d.name }
+            let name = twins.count > 1 ? "\(d.name) (\(twins.firstIndex { $0.id == d.id }! + 1))" : d.name
+            return DisplayInfo(id: d.id, uuid: d.uuid, name: name, bounds: d.bounds,
+                               isMain: d.id == mainID, isBuiltin: d.isBuiltin, isActive: true, serial: d.serial)
         }
     }
     func hasBuiltInDisplay() -> Bool { true }
