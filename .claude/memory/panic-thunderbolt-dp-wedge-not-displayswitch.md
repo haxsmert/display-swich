@@ -26,7 +26,9 @@ metadata:
 核查本 app 有没有动过屏:在它进程的日志里搜 SkyLight 的 `SLSCompleteDisplayConfigurationWithOption`
 (每次开关屏必留)。取证方法:日志 `kernel[0:<十六进制 tid>]` 对应崩溃快照的十进制 tid;
 快照 `lastRunTime` 是「距快照多少秒」;`kmutil inspect -V release --show-kext-uuids` 把快照里的 UUID
-映射到驱动名;zsh 里要写 `/usr/bin/log`(`log` 是 zsh 内置命令)。参见 [[displayswitch-real-usage-dock-workflow]]。
+映射到驱动名;zsh 里要写 `/usr/bin/log`(`log` 是 zsh 内置命令)。
+数 `evaluating for > 1m` 时谓词要加 `AND process != "log"`:`log` 命令自己的启动记录带着查询参数,会命中同一串字
+(2026-10-23 拔插前自查,10 分钟「3 条」全是这种,排除后 2 小时内 0 条)。参见 [[displayswitch-real-usage-dock-workflow]]。
 
 **2026-10-22 第三次撞见同一卡死(未崩溃,及时发现)**:拔坞后 `scripts/selfcheck.sh` 的「物理外接屏数 ≥ 活跃外接屏数」
 一项报 ❌(物理 0、活跃外接 2),WindowServer 始终没处理这次拔出;适配器 10 分钟刷 5946 条 `evaluating for > 1m`,
