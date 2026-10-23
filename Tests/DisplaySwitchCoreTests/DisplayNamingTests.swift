@@ -43,6 +43,33 @@ func labelsStableByIdentityNotPosition() {
     #expect(labels[1] == "External Display (1)")             // 仍跟随 uuid-1,无视它在右
     #expect(labels[2] == "External Display (2)")
 }
+@Test("有序列号文本时按它编号,不按 UUID:两者顺序相反时以序列号为准")
+func labelsBySerialOverUUID() {
+    let a = makeInfo(id: 1, uuid: "uuid-a", serial: "SN-7")
+    let b = makeInfo(id: 2, uuid: "uuid-b", serial: "SN-2")
+    let labels = displayLabels(for: [a, b])
+    #expect(labels[2] == "External Display (1)")
+    #expect(labels[1] == "External Display (2)")
+}
+@Test("换接口后系统给的 UUID 与屏幕编号都换了,同一台屏的号不变(跟序列号走)")
+func labelsSurviveReconnectWithNewUUIDs() {
+    // 换口前:SN-7 那台拿着 uuid-a、id 4;换口后它变成 uuid-z、id 2,另一台反过来。
+    let before = displayLabels(for: [makeInfo(id: 4, uuid: "uuid-a", serial: "SN-7"),
+                                     makeInfo(id: 2, uuid: "uuid-z", serial: "SN-2")])
+    let after = displayLabels(for: [makeInfo(id: 2, uuid: "uuid-z", serial: "SN-7"),
+                                    makeInfo(id: 4, uuid: "uuid-a", serial: "SN-2")])
+    #expect(before[4] == "External Display (2)" && after[2] == "External Display (2)")   // SN-7 始终是 (2)
+    #expect(before[2] == "External Display (1)" && after[4] == "External Display (1)")   // SN-2 始终是 (1)
+}
+@Test("没有序列号文本的屏仍按 UUID 编号;与有序列号的同名屏放在一起时也有确定顺序")
+func labelsFallBackToUUIDWithoutSerial() {
+    let labels = displayLabels(for: [makeInfo(id: 1, uuid: "uuid-b"), makeInfo(id: 2, uuid: "uuid-a")])
+    #expect(labels[2] == "External Display (1)")
+    #expect(labels[1] == "External Display (2)")
+    let mixed = displayLabels(for: [makeInfo(id: 3, uuid: "uuid-a"), makeInfo(id: 4, uuid: "uuid-z", serial: "SN-9")])
+    #expect(mixed[4] == "External Display (1)")
+    #expect(mixed[3] == "External Display (2)")
+}
 @Test("关掉同名其一后,剩下那块仍保号、不被顶替(整组含已关闭快照)")
 func labelsKeepNumberWhenSiblingDisabled() {
     // 关掉一块:它仍在组里(系统名带原后缀);另一块活跃的系统已摘号成 "External Display"

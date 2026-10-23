@@ -22,9 +22,13 @@ public struct DisplayInfo: Equatable, Sendable {
     public let isMain: Bool
     public let isBuiltin: Bool
     public let isActive: Bool
+    /// 显示器自带的序列号文本(EDID 里的那一项),每台不同、换接口不变;没有就是空串。
+    /// 同型号屏只能靠它分清是哪一台:系统的数字序列号两台可以相同,UUID 会随接法变(见 `identityKey(of:)`)。
+    /// 只用来排序编号,不写进日志、诊断或界面。
+    public let serial: String
 
     public init(id: CGDirectDisplayID, uuid: String, name: String, bounds: CGRect,
-                isMain: Bool, isBuiltin: Bool, isActive: Bool) {
+                isMain: Bool, isBuiltin: Bool, isActive: Bool, serial: String = "") {
         self.id = id
         self.uuid = uuid
         self.name = name
@@ -32,6 +36,7 @@ public struct DisplayInfo: Equatable, Sendable {
         self.isMain = isMain
         self.isBuiltin = isBuiltin
         self.isActive = isActive
+        self.serial = serial
     }
 }
 

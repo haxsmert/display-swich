@@ -49,7 +49,7 @@ final class MockService: SystemDisplayService {
             .map { d in
                 guard nameLagging.contains(d.id) else { return d }
                 return DisplayInfo(id: d.id, uuid: d.uuid, name: "", bounds: d.bounds,
-                                   isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive)
+                                   isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive, serial: d.serial)
             }
     }
 
@@ -205,6 +205,18 @@ func menuItemsMergeActiveAndDisabled() {
     #expect(items.count == 2)
     #expect(items.first { $0.id == 2 }?.isOn == true)
     #expect(items.first { $0.id == 3 }?.isOn == false)
+}
+
+@Test("同型号两块屏按序列号排序、编号;关掉其一,它的号也跟着序列号不变")
+func menuItemsOrderAndNumberBySerial() {
+    // UUID 顺序与序列号顺序相反:id 2 的 uuid 小、序列号大。
+    let svc = MockService(all: [makeInfo(id: 2, main: true, x: 0, uuid: "uuid-a", serial: "SN-7"),
+                                makeInfo(id: 4, x: 1920, uuid: "uuid-z", serial: "SN-2")])
+    let ctrl = DisplayController(service: svc)
+    #expect(ctrl.menuItems().map(\.label) == ["External Display (1)", "External Display (2)（主）"])
+    #expect(ctrl.menuItems().map(\.id) == [4, 2])
+    _ = ctrl.toggle(id: 4)
+    #expect(ctrl.menuItems().map(\.label) == ["External Display (1)", "External Display (2)（主）"])
 }
 
 @Test("restoreAll 把所有已关闭的屏重新打开并清空")

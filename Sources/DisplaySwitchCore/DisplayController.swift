@@ -35,7 +35,8 @@ public final class DisplayController {
     /// 每块屏最近一次亮着时的说明行,给关着的屏预留宽度用(见 `DisplayMenuItem.sizingDetail`)。
     private var knownLitDetails: [String: String] = [:]
 
-    /// 一块屏的稳定键:UUID,取不到时用 display ID。
+    /// 缓存名字、说明行用的键:UUID,取不到时用 display ID。换接口后 UUID 可能变(见 `identityKey(of:)`),
+    /// 那只是缓存落空、重新取一次;编号与排序不用它。
     private func key(of d: DisplayInfo) -> String { d.uuid.isEmpty ? "id-\(d.id)" : d.uuid }
 
     public init(service: SystemDisplayService) {
@@ -53,7 +54,7 @@ public final class DisplayController {
             if !d.name.isEmpty { knownNames[key(of: d)] = d.name; return d }
             guard let name = knownNames[key(of: d)] else { return d }
             return DisplayInfo(id: d.id, uuid: d.uuid, name: name, bounds: d.bounds,
-                               isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive)
+                               isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive, serial: d.serial)
         }
     }
 
@@ -118,14 +119,14 @@ public final class DisplayController {
             // 已被本 app 断开的屏不可能是主屏:显示时清除 isMain,
             // 否则关掉主屏后(主屏角色转移给另一块)会出现两块都标「主屏」的错乱。
             byID[d.id] = DisplayInfo(id: d.id, uuid: d.uuid, name: d.name, bounds: d.bounds,
-                                     isMain: false, isBuiltin: d.isBuiltin, isActive: false)
+                                     isMain: false, isBuiltin: d.isBuiltin, isActive: false, serial: d.serial)
         }
         for d in active { byID[d.id] = d }
-        // 按稳定键(基名+UUID)排序:同名屏相邻、与编号同序,不随位置漂移。
+        // 按稳定键(基名+显示器身份)排序:同名屏相邻、与编号同序,不随位置、接口漂移。
         let ordered = byID.values.sorted {
-            (baseName($0.name), $0.uuid, $0.id) < (baseName($1.name), $1.uuid, $1.id)
+            (baseName($0.name), identityKey(of: $0), $0.uuid, $0.id) < (baseName($1.name), identityKey(of: $1), $1.uuid, $1.id)
         }
-        // 整组(活跃+已关闭)一起算标签:同名屏按 UUID 稳定编号,关掉其一不丢号、重开不漂移。
+        // 整组(活跃+已关闭)一起算标签:同名屏按显示器身份稳定编号,关掉其一不丢号、重开不漂移。
         let labels = displayLabels(for: ordered)
         let fallback = builtInFallbackAvailable()
         let ports = service.macPorts()

@@ -66,7 +66,8 @@ public final class CGDisplayService: SystemDisplayService {
                 bounds: CGDisplayBounds(id),
                 isMain: id == mainID,
                 isBuiltin: CGDisplayIsBuiltin(id) != 0,
-                isActive: true
+                isActive: true,
+                serial: Self.serial(for: id)
             )
         }
     }
@@ -364,6 +365,22 @@ public final class CGDisplayService: SystemDisplayService {
         // 首选 .forAppOnly:进程退出由系统自动回滚,天然防死锁。
         // 若 Step 2 实测断开不全局生效,改成 .forSession(见 Step 3 兜底)。
         return CGCompleteDisplayConfiguration(cfg, .forAppOnly) == .success
+    }
+
+    /// 显示器自带的序列号文本:CoreDisplay 给的设备树位置(这块屏的显示控制器)上,`DisplayAttributes` 里
+    /// `ProductAttributes` 的 `AlphanumericSerialNumber`——就是 EDID 里的序列号文本(2026-10-23 逐台对过:
+    /// 两台同型号屏这一项只差末位,与各自物理口上的 EDID 一致;数字序列号 `SerialNumber` 两台都是同一个值)。
+    /// 取不到返回空串,编号退回按 UUID。
+    private static func serial(for id: CGDirectDisplayID) -> String {
+        guard let info = displayInfoDictionary,
+              let location = (info(id)?.takeRetainedValue() as? [String: Any])?["IODisplayLocation"] as? String else { return "" }
+        let entry = IORegistryEntryFromPath(kIOMainPortDefault, location)
+        guard entry != 0 else { return "" }
+        defer { IOObjectRelease(entry) }
+        let attributes = IORegistryEntryCreateCFProperty(entry, "DisplayAttributes" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? [String: Any]
+        let serial = (attributes?["ProductAttributes"] as? [String: Any])?["AlphanumericSerialNumber"] as? String
+        return serial?.trimmingCharacters(in: .whitespaces) ?? ""
     }
 
     private static func uuid(for id: CGDirectDisplayID) -> String {
