@@ -31,6 +31,10 @@ final class StatusPanelController: NSObject {
     private var revealed = false
     /// 面板此刻贴着的图标位置(最近一次落在菜单栏里的位置)。
     private var anchor: NSRect?
+    /// 面板从什么时候起一直藏着(图标不在任何菜单栏里);重新显示、收起时清掉。见 `pollIcon`。
+    private var hiddenSince: Date?
+    /// 对位轮询的代号:每开始一轮就加一,旧的那轮看到代号变了就停,同一时间只有一轮在跑。
+    private var iconWatchGeneration = 0
     /// 这次「展开界面」会话开始的时刻(开机以来的秒数,与事件时间戳同一基准);没有会话为 nil。
     private var sessionBeganAt: TimeInterval?
 
@@ -79,7 +83,8 @@ final class StatusPanelController: NSObject {
         observers.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                             object: nil, queue: .main) { [weak self] _ in
             guard let self, self.isOpen else { return }
-            self.placePanelWhenIconReady()
+            self.placePanel()
+            self.watchIcon()
         })
         // 别的 app 被激活(⌘Tab 或点了它)时收起,与系统菜单的习惯一致。
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
@@ -123,6 +128,7 @@ final class StatusPanelController: NSObject {
     /// 立刻完整显示,不渐显:Wi-Fi 菜单打开时前一帧还没有、下一帧就是完整的(60 帧录屏逐帧看,2026-10-23)。
     /// 曾渐显 0.12 秒。用一次 0 秒的动画来设,正在渐隐时再打开,能把那段渐隐一并替掉。
     private func reveal() {
+        hiddenSince = nil
         guard !revealed else { return }
         revealed = true
         panel.ignoresMouseEvents = false
@@ -138,6 +144,11 @@ final class StatusPanelController: NSObject {
         anchor = nil
         panel.ignoresMouseEvents = true
         panel.alphaValue = 0
+        // 刚藏起:开始计时,并盯着图标什么时候落进菜单栏(不一定每一步都有通知)。
+        if hiddenSince == nil {
+            hiddenSince = Date()
+            watchIcon()
+        }
     }
 
     /// 我们这边要收起面板(点外面、按 Esc、切到别的 app、图标一直没落进菜单栏)。
@@ -158,6 +169,8 @@ final class StatusPanelController: NSObject {
         isOpen = false
         revealed = false
         sessionBeganAt = nil
+        hiddenSince = nil
+        iconWatchGeneration += 1        // 停掉还在跑的对位轮询
         eventMonitors.forEach(NSEvent.removeMonitor)
         eventMonitors.removeAll()
         guard animated else {
@@ -263,16 +276,31 @@ final class StatusPanelController: NSObject {
         return top < screen.frame.maxY ? top : icon.minY
     }
 
-    /// 主屏刚变时图标正在搬家,通知不一定每一步都有;隔一会儿再对一次位置,最多 2 秒。
-    private func placePanelWhenIconReady(attemptsLeft: Int = 10) {
+    /// 屏幕刚变、或面板刚藏起时,每 0.2 秒对一次位置:主屏切换时图标正在搬家,通知不一定每一步都有。
+    /// 每次调用都重新开始一轮(旧的一轮随之停下):面板显示着时再盯 2 秒,藏着时一直盯到显示或收起。
+    private func watchIcon() {
+        iconWatchGeneration += 1
+        let generation = iconWatchGeneration
+        let until = Date().addingTimeInterval(2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.pollIcon(generation: generation, until: until)
+        }
+    }
+
+    /// 图标**连续** 2 秒都不在任何菜单栏里(如菜单栏被设为自动隐藏)才收起:不能一直隐身开着。
+    /// 从藏起那一刻算,不从屏幕变化那一刻算——曾按后者算,还每来一次通知就并行开一轮:
+    /// 点亮内建屏后不到 2 秒又关掉,前一次切换的计时恰好在后一次搬家、面板藏着时到期,面板被收掉
+    /// (他实测「有时保留有时消失」;间隔 1.6 秒时脚本 6 轮 6 次复现,2026-10-23)。
+    private func pollIcon(generation: Int, until: Date) {
+        guard generation == iconWatchGeneration, isOpen else { return }
         placePanel()
-        guard attemptsLeft > 0 else {
-            // 2 秒后图标仍没落进菜单栏(如菜单栏被设为自动隐藏):不能一直隐身开着,收起。
-            if isOpen, !revealed { dismiss() }
+        if !revealed, let since = hiddenSince, Date().timeIntervalSince(since) >= 2 {
+            dismiss()
             return
         }
+        if revealed, Date() >= until { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.placePanelWhenIconReady(attemptsLeft: attemptsLeft - 1)
+            self?.pollIcon(generation: generation, until: until)
         }
     }
 }
