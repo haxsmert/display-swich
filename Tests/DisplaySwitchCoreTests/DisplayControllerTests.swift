@@ -41,14 +41,24 @@ final class MockService: SystemDisplayService {
     /// 名字暂时取不到的屏:真机上刚点亮的屏,CoreGraphics 的活跃列表立刻就有它,
     /// 但屏名来源(AppKit 的屏幕列表)要晚一阵才更新,这期间名字是空的(2026-10-22 实测)。
     var nameLagging: Set<CGDirectDisplayID> = []
+    /// 照系统的规矩给同名屏编号:同名的同时亮着不止一块才加 (1)(2)(按 display ID 排),只剩一块就去掉号(2026-10-23 实测)。
+    /// 号由 `numberOrder` 决定,可改它模拟系统重新编号。
+    var systemNumbering = false
+    var numberOrder: [CGDirectDisplayID] = []
 
     func activeDisplays() -> [DisplayInfo] {
-        known.values
-            .filter { activeIDs.contains($0.id) }
+        let lit = known.values.filter { activeIDs.contains($0.id) }
+        return lit
             .sorted { $0.bounds.minX < $1.bounds.minX }
             .map { d in
-                guard nameLagging.contains(d.id) else { return d }
-                return DisplayInfo(id: d.id, uuid: d.uuid, name: "", bounds: d.bounds,
+                var name = d.name
+                if systemNumbering {
+                    let twins = lit.filter { $0.name == d.name }.map(\.id)
+                    let order = numberOrder.isEmpty ? twins.sorted() : numberOrder.filter(twins.contains)
+                    if twins.count > 1, let i = order.firstIndex(of: d.id) { name = "\(d.name) (\(i + 1))" }
+                }
+                if nameLagging.contains(d.id) { name = "" }
+                return DisplayInfo(id: d.id, uuid: d.uuid, name: name, bounds: d.bounds,
                                    isMain: d.isMain, isBuiltin: d.isBuiltin, isActive: d.isActive, serial: d.serial)
             }
     }
@@ -207,21 +217,39 @@ func menuItemsMergeActiveAndDisabled() {
     #expect(items.first { $0.id == 3 }?.isOn == false)
 }
 
-@Test("同型号两块屏:写显示器自己的名字,行按序列号排,说明行写尾号;关掉其一行不挪、尾号照写")
-func sameModelRowsBySerialWithSystemNames() {
-    // 系统的 (1)(2) 与序列号顺序相反:id 2 系统叫 (1),序列号却更大。
-    let svc = MockService(all: [makeInfo(id: 2, main: true, x: 0, name: "External Display (1)", uuid: "uuid-a", serial: "SN-0007"),
-                                makeInfo(id: 4, x: 1920, name: "External Display (2)", uuid: "uuid-z", serial: "SN-0002")])
+@Test("同型号两块屏:号同系统设置,行按序列号排,说明行写尾号;关掉其一号不消失、行不挪,开回来跟系统重新编号")
+func sameModelNumbersStickAcrossToggle() {
+    // 系统按 display ID 编号:id 2 是 (1);序列号顺序与之相反,所以 id 4 排在上面。
+    let svc = MockService(all: [makeInfo(id: 2, main: true, x: 0, uuid: "uuid-a", serial: "SN-0007"),
+                                makeInfo(id: 4, x: 1920, uuid: "uuid-z", serial: "SN-0002")])
+    svc.systemNumbering = true
     let ctrl = DisplayController(service: svc)
     let items = ctrl.menuItems()
     #expect(items.map(\.id) == [4, 2])
-    #expect(items.map(\.label) == ["External Display", "External Display（主）"])
+    #expect(items.map(\.label) == ["External Display (2)", "External Display (1)（主）"])
     #expect(items.map(\.detail) == ["外接 · 序列号 …0002", "外接 · 序列号 …0007"])
-    #expect(items.map(\.sizingLabel) == ["External Display（主）", "External Display（主）"])
-    _ = ctrl.toggle(id: 4)
+    #expect(items.map(\.sizingLabel) == ["External Display (2)（主）", "External Display (2)（主）"])
+
+    _ = ctrl.toggle(id: 4)                         // 关掉 (2):系统把剩下那块的号去掉了,面板不跟着去
     let off = ctrl.menuItems()
     #expect(off.map(\.id) == [4, 2])
+    #expect(off.map(\.label) == ["External Display (2)", "External Display (1)（主）"])
     #expect(off.first?.detail == "外接 · 序列号 …0002 · 已关闭")
+
+    svc.numberOrder = [4, 2]                       // 开回来时系统对调了号
+    _ = ctrl.toggle(id: 4)
+    #expect(ctrl.menuItems().map(\.label) == ["External Display (1)", "External Display (2)（主）"])
+}
+
+@Test("同型号两块屏关掉其一:系统枚举已不知道它叫什么,名字、号与尾号全靠记账里的快照")
+func closedDisplayKeepsNameViaBookkeeping() {
+    let svc = MockService(all: [makeInfo(id: 4, x: 0, serial: "SN-0004"), makeInfo(id: 5, x: 1920, serial: "SN-0005")])
+    svc.systemNumbering = true
+    let ctrl = DisplayController(service: svc)
+    _ = ctrl.toggle(id: 4)
+    let closed = ctrl.menuItems().first { $0.id == 4 }
+    #expect(closed?.label == "External Display (1)")
+    #expect(closed?.detail == "外接 · 序列号 …0004 · 已关闭")
 }
 
 @Test("restoreAll 把所有已关闭的屏重新打开并清空")
@@ -1038,18 +1066,6 @@ func revivalSkippedWhenSymbolMissing() {
     #expect(ctrl.reviveOrphanedDisplays() == 0)
     #expect(svc.setCalls.isEmpty)
 }
-
-@Test("同型号两块屏关掉其一:系统枚举已不知道它叫什么,名字与尾号全靠记账里的快照")
-func closedDisplayKeepsNameViaBookkeeping() {
-    let svc = MockService(all: [makeInfo(id: 4, x: 0, name: "External Display (1)", serial: "SN-0004"),
-                                makeInfo(id: 5, x: 1920, name: "External Display (2)", serial: "SN-0005")])
-    let ctrl = DisplayController(service: svc)
-    _ = ctrl.toggle(id: 4)                                  // 关掉其中一块
-    let closed = ctrl.menuItems().first { $0.id == 4 }
-    #expect(closed?.label == "External Display")
-    #expect(closed?.detail == "外接 · 序列号 …0004 · 已关闭")
-}
-
 
 @Test("被关掉但线还连着的屏:菜单必须列出它,点一下就能开回来")
 func disabledExternalStaysVisibleWhileConnected() {

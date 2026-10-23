@@ -34,6 +34,8 @@ public final class DisplayController {
     private var knownNames: [String: String] = [:]
     /// 每块屏最近一次亮着时的说明行,给关着的屏预留宽度用(见 `DisplayMenuItem.sizingDetail`)。
     private var knownLitDetails: [String: String] = [:]
+    /// 每台屏(按 `identityKey(of:)`)上次亮着时系统给的号,同名另一块关掉、系统去掉它的号时沿用(见 `displayNames`)。
+    private var knownNumbers: [String: Int] = [:]
 
     /// 缓存名字、说明行用的键:UUID,取不到时用 display ID。换接口后 UUID 可能变(见 `identityKey(of:)`),
     /// 那只是缓存落空、重新取一次;编号与排序不用它。
@@ -126,8 +128,9 @@ public final class DisplayController {
         let ordered = byID.values.sorted {
             (baseName($0.name), identityKey(of: $0), $0.uuid, $0.id) < (baseName($1.name), identityKey(of: $1), $1.uuid, $1.id)
         }
-        // 整组(活跃+已关闭)一起算:名字、预留宽度、同型号屏的序列号尾号。
-        let names = displayNames(for: ordered)
+        // 整组(活跃+已关闭)一起算:名字(含系统的号)、预留宽度、同型号屏的序列号尾号。
+        for d in active { if let n = systemNumber(in: d.name) { knownNumbers[identityKey(of: d)] = n } }
+        let names = displayNames(for: ordered, knownNumbers: knownNumbers)
         let fallback = builtInFallbackAvailable()
         let ports = service.macPorts()
         return ordered.map { d in

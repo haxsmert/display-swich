@@ -17,7 +17,7 @@ func systemNumber(in name: String) -> Int? {
 /// 标签末尾的主屏标记。
 let mainMarker = "（主）"
 
-/// 单块屏的标签:显示器自己的名字(去掉系统的 (N))+ 主屏标记。
+/// 单块屏的标签(同名只有它一块时):显示器自己的名字(去掉系统的 (N))+ 主屏标记。
 public func displayLabel(for display: DisplayInfo) -> String {
     let base = baseName(display.name)
     return display.isMain ? base + mainMarker : base
@@ -32,27 +32,44 @@ struct DisplayNames: Equatable {
     let serialTail: String?
 }
 
-/// 整组屏(活跃 + 已关闭)每块的写法:名字用显示器自己的名字,同型号屏靠序列号尾号分清(他的决定,2026-10-23)。
+/// 整组屏(活跃 + 已关闭)每块的写法:同型号屏带系统设置里的号 (1)(2),说明行再写序列号尾号(他的决定,2026-10-23)。
 ///
-/// 系统给同名屏加的 (1)(2) 不用:它跟着接法走,换个口、关掉同名的另一块,号就变或消失;有了序列号尾号它就没有用处。
-/// 也不自己编号:自编的号与系统设置对不上(试过,他否了)。唯一的例外是**读不到序列号**的同型号屏——没有尾号可看,
-/// 只好照抄系统的叫法,至少此刻分得开。行的顺序按显示器身份排(`identityKey(of:)`),见 `DisplayController.menuItems`。
-func displayNames(for displays: [DisplayInfo]) -> [CGDirectDisplayID: DisplayNames] {
+/// 号要和系统设置对得上(他:「不然用户怎么和系统设置里的屏幕对上」),所以两块都亮着时**照抄系统此刻给的号**。
+/// 但系统的号是「动态消歧」:关掉同名的另一块,剩下那块的号就被系统去掉——这个他明确不要(「动态关闭后缀 1、2 很没道理」)。
+/// 所以号不随开关消失:关掉的屏用关掉前的号(快照里的名字带着),亮着但此刻没被系统编号的屏用它上次的号(`knownNumbers`,
+/// 按显示器身份记)。哪块都没有、或号撞了,补最小的空号。系统重新编号(换口、重开后可能对调)时跟着系统走。
+/// 认出是哪一台不靠号,靠尾号与行序(按 `identityKey(of:)` 排,见 `DisplayController.menuItems`)。
+/// 同名只有一块时不编号,同系统设置。
+func displayNames(for displays: [DisplayInfo], knownNumbers: [String: Int]) -> [CGDirectDisplayID: DisplayNames] {
     let tails = serialTails(for: displays)
-    var sameName: [String: Int] = [:]
-    for d in displays { sameName[baseName(d.name), default: 0] += 1 }
+    var groups: [String: [DisplayInfo]] = [:]
+    for d in displays { groups[baseName(d.name), default: []].append(d) }
     var result: [CGDirectDisplayID: DisplayNames] = [:]
-    for d in displays {
-        let base = baseName(d.name)
-        let count = sameName[base] ?? 1
-        let tail = tails[d.id]
-        if count > 1 && tail == nil {
-            let name = d.name.isEmpty ? base : d.name
-            let widest = max(count, systemNumber(in: d.name) ?? 0)
+    for (base, group) in groups {
+        guard group.count > 1 else {
+            let d = group[0]
+            result[d.id] = DisplayNames(label: displayLabel(for: d), sizingLabel: base + mainMarker, serialTail: tails[d.id])
+            continue
+        }
+        let members = group.sorted { (identityKey(of: $0), $0.uuid, $0.id) < (identityKey(of: $1), $1.uuid, $1.id) }
+        var number: [CGDirectDisplayID: Int] = [:]
+        var taken = Set<Int>()
+        func assign(_ d: DisplayInfo, _ n: Int?) {
+            guard number[d.id] == nil, let n, n > 0, !taken.contains(n) else { return }
+            number[d.id] = n
+            taken.insert(n)
+        }
+        // 先后:系统此刻给的号 → 关掉的屏关掉那一刻的号(快照名字里的)→ 上次记下的号 → 补最小的空号。
+        // 关掉那一刻两块是系统同时编的号,不会撞;撞只会来自很久以前记下的号,所以它排在快照后面。
+        for d in members where d.isActive { assign(d, systemNumber(in: d.name)) }
+        for d in members where !d.isActive { assign(d, systemNumber(in: d.name)) }
+        for d in members { assign(d, knownNumbers[identityKey(of: d)]) }
+        for d in members where number[d.id] == nil { assign(d, (1...).first { !taken.contains($0) }) }
+        let widest = max(group.count, taken.max() ?? 0)
+        for d in members {
+            let name = "\(base) (\(number[d.id] ?? 0))"
             result[d.id] = DisplayNames(label: d.isMain ? name + mainMarker : name,
-                                        sizingLabel: "\(base) (\(widest))" + mainMarker, serialTail: nil)
-        } else {
-            result[d.id] = DisplayNames(label: displayLabel(for: d), sizingLabel: base + mainMarker, serialTail: tail)
+                                        sizingLabel: "\(base) (\(widest))" + mainMarker, serialTail: tails[d.id])
         }
     }
     return result
