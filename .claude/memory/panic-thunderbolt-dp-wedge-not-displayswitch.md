@@ -35,6 +35,8 @@ metadata:
 
 **归因未定,对照实验进行中(2026-10-26 起)**:他不认同是系统的问题——「几天内连续出问题,从概率上不对」,
 认为是 app 没处理好(类比 Java 里线程没释放)。10-26 11:57 重启后他**完全不开 app**,计划 7–8 天(到 11-02 前后)看还卡不卡。
+- 监视:他同意后装了 `scripts/wedge-watch.sh`(launchd 任务 `com.local.displayswitch.wedge-watch`,每 30 分钟实时采 3 秒,卡住弹通知,
+  他嫌每 10 分钟太勤)。每次结果记在 `~/Library/Logs/DisplaySwitch-wedge-watch.log`,收尾时它给出每半小时的状态;实验结束问他留不留,卸用 `uninstall`。
 - 实验期间**别跑任何 app 代码**(selfcheck、PanelSnapshots、候选版,以及调 CoreDisplay、读设备树的脚本),只用 `log stream` / `log show` 看日志,否则污染对照。
 - 判读:停用期间卡一次 → app 不是必要条件。8 天不卡只算倾向:按升级后的平均频率,纯靠运气不卡的概率约 38%,按最近两周的频率约 16%;
   要更有把握就延长到两周,再开回 app 看会不会复现。
@@ -45,7 +47,8 @@ metadata:
 
 **怎么查**(2026-10-26 实测):
 - 现场判定用 `log stream` 采几秒:卡死时每秒 10 条 `evaluating for > 1m ... NPBWAR=1`,健康时 0 条。
-  macOS 没有 `timeout`,写 `perl -e 'alarm 20; exec @ARGV' /usr/bin/log stream --predicate '...' --style compact`;zsh 里要写 `/usr/bin/log`。
+  写 `/usr/bin/log stream --timeout 3s --predicate '...' --style compact`(zsh 里要写 `/usr/bin/log`)。
+  别用 perl alarm 之类从外面用信号掐断:没写出的输出会丢,量少时整段丢光(10-26 阳性测试数成 0)。表头行带着谓词原文,数正文里的 `DPO [`。
 - **内核日志查不到历史**:10-26 查这次与上次开机的内核日志一条都没有(含卡死前),WindowServer 的却留到两周前,原因不明;
   `log show` 只看得到内存里最近约 1 分钟,卡死刷屏时那里只剩几条。面板的卡死检查(`DriverLog`,`log show --last 2m`)靠的正是这几条,
   目前报得出,余量很小。所以「`log show` 查了 N 小时 0 条」只说明「此刻没卡」(卡死是持续刷),不说明这 N 小时里没卡过。
