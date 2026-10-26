@@ -35,8 +35,12 @@ metadata:
 
 **归因未定,对照实验进行中(2026-10-26 起)**:他不认同是系统的问题——「几天内连续出问题,从概率上不对」,
 认为是 app 没处理好(类比 Java 里线程没释放)。10-26 11:57 重启后他**完全不开 app**,计划 7–8 天(到 11-02 前后)看还卡不卡。
-- 监视:他同意后装了 `scripts/wedge-watch.sh`(launchd 任务 `com.local.displayswitch.wedge-watch`,每 30 分钟实时采 3 秒,卡住弹通知,
-  他嫌每 10 分钟太勤)。每次结果记在 `~/Library/Logs/DisplaySwitch-wedge-watch.log`,收尾时它给出每半小时的状态;实验结束问他留不留,卸用 `uninstall`。
+- 监视:菜单栏小 app「雷雳驱动监视」(`Sources/WedgeWatch`,`bash scripts/wedge-watch.sh install|uninstall|status|check`),
+  装在 /Applications,登录时打开一次、他退出就一直退着;每 4 小时实时采 3 秒,卡住时图标变红三角并发通知。
+  他的要求:**要有图标、不要偷偷摸摸**;间隔 4 小时就够(先装的每 30 分钟纯后台脚本被他否了,嫌勤、嫌看不见)。
+  它只用 `log` 命令、不链接 DisplaySwitch 的代码,不污染对照。每次结果记在 `~/Library/Logs/DisplaySwitch-wedge-watch.log`,
+  收尾时按它看各时段的状态;实验结束问他留不留。
+- `swift test` 里有真机单测(读真实设备树和显示器),实验期间也别跑;只 `swift build`。
 - 实验期间**别跑任何 app 代码**(selfcheck、PanelSnapshots、候选版,以及调 CoreDisplay、读设备树的脚本),只用 `log stream` / `log show` 看日志,否则污染对照。
 - 判读:停用期间卡一次 → app 不是必要条件。8 天不卡只算倾向:按升级后的平均频率,纯靠运气不卡的概率约 38%,按最近两周的频率约 16%;
   要更有把握就延长到两周,再开回 app 看会不会复现。

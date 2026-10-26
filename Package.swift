@@ -23,6 +23,11 @@ let package = Package(
             dependencies: ["DisplaySwitchCore", "DisplaySwitchUI"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // 雷雳显示驱动卡死的菜单栏监视器:不依赖上面任何一个库,只读系统日志(见 scripts/wedge-watch.sh)。
+        .executableTarget(
+            name: "WedgeWatch",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "DisplaySwitchCoreTests",
             dependencies: ["DisplaySwitchCore"],
