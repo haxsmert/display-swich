@@ -37,7 +37,7 @@ metadata:
 认为是 app 没处理好(类比 Java 里线程没释放)。10-26 11:57 重启后他**完全不开 app**,计划 7–8 天(到 11-02 前后)看还卡不卡。
 - 监视:菜单栏小 app「雷雳驱动监视」(`Sources/WedgeWatch`,`bash scripts/wedge-watch.sh install|uninstall|status|check`),
   装在 /Applications,登录时打开一次、他退出就一直退着;每 4 小时实时采 3 秒,卡住时图标变红三角并发通知。
-  他的要求:**要有图标、不要偷偷摸摸**;间隔 4 小时就够(先装的每 30 分钟纯后台脚本被他否了,嫌勤、嫌看不见)。
+  他的要求:**要有图标、不要偷偷摸摸**,看图标变化就够,通不通知不重要;间隔 4 小时就够(先装的每 30 分钟纯后台脚本被他否了,嫌勤、嫌看不见)。
   它只用 `log` 命令、不链接 DisplaySwitch 的代码,不污染对照。每次结果记在 `~/Library/Logs/DisplaySwitch-wedge-watch.log`,
   收尾时按它看各时段的状态;实验结束问他留不留。
 - `swift test` 里有真机单测(读真实设备树和显示器),实验期间也别跑;只 `swift build`。
