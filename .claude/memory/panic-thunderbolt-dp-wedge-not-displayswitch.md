@@ -1,6 +1,6 @@
 ---
 name: panic-thunderbolt-dp-wedge-not-displayswitch
-description: macOS 27 起约每周一次的雷雳显示驱动卡死(拓展坞那路 DP 输出不回带宽申请、驱动无限等,拔坞后残影屏或开盖崩溃);能查到起点的几次本 app 都没动过屏。他曾认为是 app 没处理好,10-26 起停用 app 对照,第 2 天照样卡死并崩溃:app 不是必要条件。再遇先按这里的特征和查法判定
+description: macOS 27 起约每周一次的雷雳显示驱动卡死(唤醒重连后带宽申请的握手卡在 Mac 自己这头、驱动无限等,拔坞后残影屏或崩溃;判断是 Mac 的问题、不是坞);能查到起点的几次本 app 都没动过屏。他曾认为是 app 没处理好,10-26 起停用 app 对照,第 2 天照样卡死并崩溃:app 不是必要条件。再遇先按这里的特征和查法判定
 metadata:
   type: project
 ---
@@ -9,7 +9,10 @@ metadata:
 ① 刷 `evaluating for > 1m` 的线程卡在
 `AppleThunderboltDPConnectionManager::evaluateConnections → DPOutAdapterCM::doSynchronousEvaluation → sleepGate`;
 ② 它在等 `processBandwidthAllocationRequest → IOThunderboltController::configPollDWordWithMask`
-——**同步轮询拓展坞那路 DP 适配器的寄存器,等一个永远不翻转的状态位**(9/29 日志里的 `polling DPTX Req ... 0xe00002d6`),不设超时;
+——**同步轮询「DPTX 请求」位、等它清零**(9/29 日志 `processBandwidthAllocationRequest - ERROR: got an error polling DPTX Req! dptx_poll_status = 0xe00002d6`,即超时),超时后接着等、不放弃。
+按 USB4 规范,这一位在**主机这头的 DP IN 适配器**里,由出图的一方(Mac 的显示引擎)在连接管理器确认分配后清掉——
+卡住的握手两头都在 Mac 里,不在坞上(推断:依据是规范的寄存器布局,Linux `drivers/thunderbolt/tb_regs.h` 标明 `ADP_DP_CS_8` 只属 DP IN;
+`usb4_dp_port_wait_and_clear_cm_ack` 等同一位,500 ms 不清就放弃)。10-27 之前我一直写成「坞那路不回应」,是把日志里的对象名 `DPO [0:0x1:0x13]` 当成了被等的一方;
 ③ 拔坞的拆除线程 `IOThunderboltConnectionManager::rescan → terminateInvalidClientsOnPort → DPOutAdapter::requestTerminate`
 也卡在同一把门上 → 拆不掉旧坞(残影屏)、不处理新插入(插回不亮、坞上鼠标失灵),开盖唤醒约 60 秒后
 `busy timeout[0], (60s) ... 'IOThunderboltPort'` 内核崩溃(watchdogd 触发)。只有重启能解。
@@ -36,7 +39,8 @@ metadata:
 查得到接口的四次(09-22、09-29、10-22、10-24)都是 `DPO [0:0x1:0x13]`。
 - **10-27 升级 27.2(26B123)后照样卡**:15:19 开机,15:22:32 第一次屏幕唤醒两块屏掉线又回来,适配器就卡上了(悄悄卡住型,
   两块屏都亮着;报错变成 `NPHPDS=0 ... HPDS=1 NHPDS=0`,只剩带宽申请挂着)。监视器 15:21 刚查过、4 小时后才会再查,
-  是我手动点了「立即检查」才变红——4 小时的空档是真实存在的。
+  是我手动点了「立即检查」才变红——4 小时的空档是真实存在的。15:34 卡着时坞被拔下又插回,15:36 崩溃(同一崩溃文本);
+  之后 15:42、15:53 两次关机卡住报告里没有这组死等栈。
 **官方发布说明里的线索**(2026-10-27 读原文:`https://developer.apple.com/tutorials/data/documentation/macos-release-notes/<slug>.json`,
 网页版是脚本渲染、抓不到正文):macOS 27.0 的 **Thunderbolt** 小节 Resolved Issues 有一条「两块相同的显示器(同型号、同序列号)
 连上时,第一块正常、第二块可能不亮(176292156)」——正是他这套:两块同型号屏 EDID 里的数字序列号相同(见
@@ -49,6 +53,12 @@ metadata:
 Apple DTS 说根子是显示管线分配(高刷屏占两条管线、先认到的那块全拿走),27 做了改动「应该有改善」,27.0.1 仍有人复现——
 症状和我们不同,但机型、同款双屏、27 改动的区域都对得上;已写进反馈草稿的「可能相关」。
 **他确认(2026-10-26):升级前也是这个坞带两块屏,从没遇到过**——同一套硬件和用法,只有系统变了。
+这台 Mac 的安装记录里没有坞的固件更新(10-27 查);坞是否在别的电脑上刷过固件没核实。
+
+**是坞还是 Mac(10-27 他问,我的判断:Mac 的问题)**:① 前后对照只有系统变了;② 卡住的握手按规范两头都在 Mac 里(上面 ②,推断);
+③ 无限等、拆除被挡、崩溃,全在 macOS 的驱动里(栈亲见)——外接设备再怎么不回,驱动也该超时放弃;④ 27 恰好改过这一块(下面的发布说明和论坛帖)。
+坞唯一沾边的是:唤醒后屏掉线又重连(`hot plug 0 → 1`)要经过坞传上来,是诱因,但这是正常事件。
+还没做的差分:换一个坞或另一台 Mac 接同一个坞——能把「只有这个坞才触发」排除掉,目前排除不了。
 
 **对照实验(10-26 起,10-27 有了结果:停用 app 照样卡死 → app 不是必要条件)**:他不认同是系统的问题——「几天内连续出问题,从概率上不对」,
 认为是 app 没处理好(类比 Java 里线程没释放)。10-26 11:57 重启后他**完全不开 app**,计划 7–8 天(到 11-02 前后)看还卡不卡。
