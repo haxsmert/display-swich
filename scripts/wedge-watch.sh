@@ -27,7 +27,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LABEL="com.local.displayswitch.wedge-watch"
 APP_NAME="雷雳驱动监视"
 APP="/Applications/$APP_NAME.app"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+# 开机自动打开用普通的「登录时打开」(和别的 app 一样),不注册成后台服务:LaunchAgent 会被 macOS 一律算作后台活动,
+# 每次重装都弹「App 后台活动:可在后台运行」,他不要(2026-10-28)。早先的 LaunchAgent 装在这里,装新版时一并清掉。
+OLD_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 # 早先的纯脚本版(每 30 分钟、无图标)装在这里,装新版时一并清掉。
 OLD_SCRIPT_DIR="$HOME/Library/Application Support/DisplaySwitch-wedge-watch"
 # 三个覆盖项只供验证用(换成一个必有输出的谓词、记到另一份文件、现场存到另一处);平时不设。
@@ -73,40 +75,46 @@ INFO
     echo "$out"
 }
 
+# login_item add | remove | exists:系统设置「登录项与扩展」→「登录时打开」里的那一项。
+login_item() {
+    local script
+    case "$1" in
+        add) script="if not (exists login item \"$APP_NAME\") then make login item at end with properties {path:\"$APP\", hidden:false}" ;;
+        remove) script="if exists login item \"$APP_NAME\" then delete login item \"$APP_NAME\"" ;;
+        exists) script="exists login item \"$APP_NAME\"" ;;
+    esac
+    osascript -e 'tell application "System Events"' -e "$script" -e 'end tell'
+}
+
+remove_old_agent() {
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    rm -f "$OLD_PLIST"
+}
+
 install() {
     local built
     built="$(build)"
-    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    remove_old_agent
     pkill -x WedgeWatch 2>/dev/null || true
     rm -rf "$APP" "$OLD_SCRIPT_DIR"
     cp -R "$built" "$APP"
-    mkdir -p "$(dirname "$PLIST")"
-    # 只在登录时打开一次(RunAtLoad),不设 KeepAlive:他从菜单里退出,就一直退着,直到下次登录。
-    cat > "$PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key>
-  <array><string>$APP/Contents/MacOS/WedgeWatch</string></array>
-  <key>RunAtLoad</key><true/>
-</dict>
-</plist>
-PLIST
-    launchctl bootstrap "gui/$(id -u)" "$PLIST"
-    echo "已装上并打开:$APP(菜单栏图标),每 4 小时、屏幕唤醒后、插拔坞后各查一次,结果记在 $LOG"
+    # 只在登录时打开一次:他从菜单里退出,就一直退着,直到下次登录。
+    login_item add >/dev/null
+    open "$APP"
+    echo "已装上并打开:$APP(菜单栏图标),登录时自动打开;每 4 小时、屏幕唤醒后、插拔坞后各查一次,结果记在 $LOG"
 }
 
 uninstall() {
-    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    remove_old_agent
+    login_item remove >/dev/null
     pkill -x WedgeWatch 2>/dev/null || true
-    rm -rf "$PLIST" "$APP" "$OLD_SCRIPT_DIR"
+    rm -rf "$APP" "$OLD_SCRIPT_DIR"
     echo "已退出并卸掉;检查记录留着:$LOG,现场留着:$EVIDENCE"
 }
 
 status() {
     if pgrep -x WedgeWatch >/dev/null; then echo "在跑(菜单栏「${APP_NAME}」)"; else echo "没在跑"; fi
+    if [ "$(login_item exists)" = "true" ]; then echo "登录时打开:是"; else echo "登录时打开:否"; fi
     [ -f "$LOG" ] && tail -n 5 "$LOG" || true
     if [ -d "$EVIDENCE" ]; then echo "现场:$EVIDENCE($(find "$EVIDENCE" -maxdepth 1 -name 'wedge-*' | wc -l | tr -d ' ') 份卡住现场)"; fi
 }

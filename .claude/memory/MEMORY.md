@@ -13,3 +13,4 @@
 - [公开仓库脱敏要设闸门](public-repo-deidentify-gate.md) — 连记忆都推公开仓库;提交前用本机 .git/info 词表过一遍,命中就不提交,别只打印
 - [系统缺陷别让他改接法做对照](dont-ask-user-to-change-setup-for-platform-bugs.md) — 归因到平台后替他报给厂商、减轻出事代价;别布置要他改真实接法 / 用法的实验
 - [故障现场先留证再重启](preserve-live-fault-evidence.md) — 卡住但安全时先收诊断(⌃⌥⇧⌘. 或反馈助理)、拷走崩溃报告;系统一周内清报告、scratchpad 重启即空
+- [自启动用登录项,别注册 LaunchAgent](no-background-items-use-login-items.md) — LaunchAgent 会弹「App 后台活动」,他视为偷偷摸摸;他突然否定时先问清看到了什么
