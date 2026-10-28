@@ -6,10 +6,11 @@ import UserNotifications
 //
 // 与 DisplaySwitch 完全分开:不链接它的任何代码,不碰显示器——
 // 2026-10-26 起他停用 DisplaySwitch 做对照实验,监视器不能成为新的变量。
-// 判断卡没卡只读系统日志;唤醒和插拔坞只被动收系统通知;只有已经卡住时才读设备树存现场(见 Evidence)。
+// 判断卡没卡只读系统日志;唤醒和插拔坞只被动收系统通知;发现卡住之后才去抓现场(见 Evidence)。
 // 图标常驻菜单栏(他:「要放个图标让我知道,不要偷偷摸摸」)。
-// 每 4 小时查一次(他定的),外加屏幕唤醒后 1 分钟、插拔坞后 10 秒各查一次(2026-10-28 他同意加):
+// 每 4 小时查一次(他定的),外加屏幕唤醒、插拔坞之后各查(2026-10-28 他同意加):
 // 卡死的起点都在唤醒重连时,而卡着时插回坞约 60 秒就崩溃——10-27、10-28 两次都是在 4 小时的空档里照常插拔才崩的。
+// 刚卡上时要过 1 分钟才开始刷报错(报错原文是「evaluating for > 1m」,推断),所以事件后 75 秒那次才看得见刚起的卡死。
 
 /// 这次检查是怎么触发的,记进检查记录和现场说明。
 enum Trigger: String {
@@ -70,18 +71,20 @@ enum Probe {
     }
 }
 
-/// 卡住时自动留现场,报给 Apple 时补交。2026-10-28 起:之前几次卡住的现场都没留下,
+/// 卡住时留现场,报给 Apple 时补交。2026-10-28 起:之前几次卡住的现场都没留下,
 /// 带函数名的关机卡住报告也在一周内被系统清掉,最后报上去的只剩抄录的几行。全部只读、不要密码。
-/// 都存在 ~/Library/Logs/DisplaySwitch-wedge-evidence 下:
-/// - `wedge-<时间>/`:卡住那一刻的内核日志、设备树里 DP 适配器的状态、近 24 小时的唤醒与屏幕插拔、睡眠与充电记录;
-/// - `reports/`:系统的崩溃 / 关机卡住报告,每次检查都把新出现的拷过来(原件约一周就被清);
-/// - `sysdiagnose/`:他按组合键收的完整诊断,之后第一次检查时从 /private/var/tmp 拷过来。
+/// **只在发现卡住之后才抓**(他:「应该是触发式的,比如发现卡住了,再去抓信息」),平时什么都不读、不拷。
+/// 每次卡住一个文件夹 `~/Library/Logs/DisplaySwitch-wedge-evidence/wedge-<时间>/`:
+/// - 发现时当场存:内核日志、设备树里 DP 适配器的状态、近 24 小时的唤醒与屏幕插拔、睡眠与充电记录;
+/// - 重启后补齐:这次卡住之后才写出来的崩溃 / 关机卡住报告(原件约一周就被清),和他按组合键收的完整诊断。
 enum Evidence {
     /// 环境变量只供验证用(存到另一处),平时不设。
     static let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["WEDGE_WATCH_EVIDENCE"]
         ?? NSHomeDirectory() + "/Library/Logs/DisplaySwitch-wedge-evidence")
     /// 已报给 Apple 的那份反馈,补交现场时加到它上面。
     static let feedbackID = "FB25346775"
+    /// 现场里的「待补」标记,内容是发现卡住的时刻(Unix 秒);重启后补齐、过了时限就删掉。
+    private static let pendingName = ".pending"
 
     /// 存一份卡住现场,返回它的文件夹;要跑一两分钟,只能在后台线程调。
     static func capture(_ trigger: Trigger, count: Int) -> URL {
@@ -90,6 +93,7 @@ enum Evidence {
         stamp.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let folder = root.appendingPathComponent("wedge-\(stamp.string(from: now))\(Probe.isTest ? "-test" : "")")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try? String(now.timeIntervalSince1970).write(to: folder.appendingPathComponent(pendingName), atomically: true, encoding: .utf8)
         func save(_ name: String, _ data: Data?) {
             try? (data ?? Data("（没取到）\n".utf8)).write(to: folder.appendingPathComponent(name))
         }
@@ -133,29 +137,49 @@ enum Evidence {
 
         接下来：
         1. 卡住时别拔坞：拔了屏幕拆不掉，插回约 60 秒就崩溃。
-        2. 同时按 ⌃⌥⇧⌘ 和句号键，收一份完整诊断（要几分钟）。之后第一次检查时，它会被拷到上一层的 sysdiagnose 文件夹。
-        3. 存好东西，接着坞重启。
-        4. 把这个文件夹和完整诊断补交到 \(feedbackID)：在反馈助理里打开这份反馈，点「添加附件」。
+        2. 同时按 ⌃⌥⇧⌘ 和句号键，收一份完整诊断（要几分钟）。
+        3. 存好东西，接着坞重启。重启后，完整诊断和这次卡住之后的崩溃、关机卡住报告会自动补进这个文件夹（关机卡住报告可能要过几个小时才出来）。
+        4. 把这个文件夹补交到 \(feedbackID)：在反馈助理里打开这份反馈，点「添加附件」。
 
         """
     }
 
-    /// 把系统新出现的崩溃 / 关机卡住报告和完整诊断拷过来,拷过的跳过。每次检查都跑,只能在后台线程调。
-    static func syncSystemFiles() {
-        // 跳过隐藏的 `.contents.panic`:它是最近一次崩溃的摘要,每次都被覆盖,拷一次就再不会更新。
-        copyNew(from: "/Library/Logs/DiagnosticReports", into: "reports") { name, _ in
-            !name.hasPrefix(".") && (name.hasSuffix(".panic") || name.hasSuffix(".shutdownStall"))
-        }
-        // 收诊断时最后才打包成 .tar.gz,一分钟没再改过才算收完,免得拷到半截。
-        copyNew(from: "/private/var/tmp", into: "sysdiagnose") { name, modified in
-            name.hasPrefix("sysdiagnose_") && name.hasSuffix(".tar.gz") && Date().timeIntervalSince(modified) > 60
+    /// 给重启前存下的现场补齐卡住之后才出现的文件,拷过的跳过;没有待补的现场就什么都不读。只能在后台线程调。
+    /// 系统的报告都是开机后才写出来的:崩溃报告在开机约 1.5 分钟后(10-28),关机卡住报告晚到几个小时(10-27 的两份晚了约 5 小时),
+    /// 所以开机后每次检查都补一次,开机满一天才去掉待补标记。
+    static func completePending() {
+        let manager = FileManager.default
+        guard let boot = bootTime(),
+              let folders = try? manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
+        for folder in folders where folder.lastPathComponent.hasPrefix("wedge-") {
+            let marker = folder.appendingPathComponent(pendingName)
+            guard let text = try? String(contentsOf: marker, encoding: .utf8),
+                  let seconds = TimeInterval(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { continue }
+            let found = Date(timeIntervalSince1970: seconds)
+            // 还在发现卡住的那次开机里:没重启过,报告还没有,接着等。
+            guard found < boot else { continue }
+            // 跳过隐藏的 `.contents.panic`:它是最近一次崩溃的摘要,每次都被覆盖。
+            copyNew(from: "/Library/Logs/DiagnosticReports", into: folder) { name, modified in
+                !name.hasPrefix(".") && (name.hasSuffix(".panic") || name.hasSuffix(".shutdownStall")) && modified >= found
+            }
+            // 收诊断时最后才打包成 .tar.gz,一分钟没再改过才算收完,免得拷到半截。
+            copyNew(from: "/private/var/tmp", into: folder) { name, modified in
+                name.hasPrefix("sysdiagnose_") && name.hasSuffix(".tar.gz") && modified >= found && Date().timeIntervalSince(modified) > 60
+            }
+            if Date().timeIntervalSince(boot) > 24 * 3600 { try? manager.removeItem(at: marker) }
         }
     }
 
-    private static func copyNew(from source: String, into folderName: String, where wanted: (String, Date) -> Bool) {
+    private static func bootTime() -> Date? {
+        var value = timeval()
+        var size = MemoryLayout<timeval>.size
+        guard sysctlbyname("kern.boottime", &value, &size, nil, 0) == 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(value.tv_sec) + TimeInterval(value.tv_usec) / 1_000_000)
+    }
+
+    private static func copyNew(from source: String, into target: URL, where wanted: (String, Date) -> Bool) {
         let manager = FileManager.default
         guard let names = try? manager.contentsOfDirectory(atPath: source) else { return }
-        let target = root.appendingPathComponent(folderName)
         for name in names {
             let from = URL(fileURLWithPath: source).appendingPathComponent(name)
             let to = target.appendingPathComponent(name)
@@ -196,17 +220,20 @@ final class WatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.check(.timer)
         }
         tick?.tolerance = 30
-        // 屏幕醒来约 2.5 秒后两块屏会掉线重连,卡死就起在这一下;等 1 分钟,重连和重新申请带宽都该结束了。
+        // 屏幕醒来约 2.5 秒后两块屏会掉线重连,卡死就起在这一下,要再过 1 分钟才开始刷报错。
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification,
                                                           object: nil, queue: .main) { [weak self] _ in
-            self?.check(.wake, after: 60)
+            self?.check(.wake, after: 75)
         }
         observeDock()
         check(.launch)
+        // 若上次开机里卡住过:崩溃报告开机后一两分钟才写出来,过 3 分钟给那份现场补一次。没卡过就什么都不读。
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 180) { Evidence.completePending() }
     }
 
-    /// 插拔坞后 10 秒查一次(拔坞后系统正常 5 秒内就拆完外接屏)。卡着时拔坞会留下拆不掉的屏,
-    /// 插回约 60 秒就崩溃——拔完图标立刻变红,他才知道先重启、别插回。
+    /// 插拔坞后查两次。10 秒那次看拔之前就已经卡着的(拔坞后系统正常 5 秒内就拆完外接屏):卡着时拔坞会留下拆不掉的屏,
+    /// 插回约 60 秒就崩溃——拔完图标立刻变红,他才知道先重启、别插回;插回时卡着,也赶在崩溃前把现场存下。
+    /// 75 秒那次看是不是这一下刚卡上的。
     private func observeDock() {
         powerSource = Self.currentPowerSource()
         let callback: IOPowerSourceCallbackType = { context in
@@ -224,6 +251,7 @@ final class WatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard now != powerSource else { return }
         powerSource = now
         check(.dock, after: 10)
+        check(.dock, after: 75)
     }
 
     private static func currentPowerSource() -> String? {
@@ -246,7 +274,8 @@ final class WatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let count = Probe.sample()
             Probe.record(count, trigger)
             DispatchQueue.main.async { self.finish(count, trigger) }
-            Evidence.syncSystemFiles()
+            // 重启前卡住过的现场,把之后才写出来的报告补进去;没有待补的就什么都不读。
+            Evidence.completePending()
         }
     }
 

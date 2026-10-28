@@ -17,4 +17,5 @@ metadata:
 
 **How to apply:** 「先恢复再汇报」([[restore-visibility-before-reporting]])管的是他看不见屏的情形;
 屏还亮、只要不动线就安全时,先留证再恢复。证据别只放 scratchpad,也别只抄进文字。
+要做成自动留证时**做成触发式**:平时只做最小的判断,发现异常才去抓信息、拷报告(他 10-28 否了「每次检查都拷系统报告」的版本)。
 参见 [[panic-thunderbolt-dp-wedge-not-displayswitch]]。
