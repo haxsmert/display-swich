@@ -1,7 +1,7 @@
 - [设计文档的非目标是刻意决策](design-doc-non-goals-are-deliberate.md) — 代码里看似的缺口多半是有意为之,动手前读 §3 和 §7 全文
 - [真实动线:接坞办公、拔坞走人](displayswitch-real-usage-dock-workflow.md) — 拔插是日常而非边缘;另有 HDMI / 电源 / 键盘分开接的场景,两种接法都要验收
 - [发 release 必须先真机验收](release-needs-real-machine-acceptance.md) — 界面 / 文案类改动要等他说「没问题」才发;commit/tag 随时,release 是对外承诺;别的机器发的版本机也要换上
-- [雷雳显示驱动约每周卡死一次](panic-thunderbolt-dp-wedge-not-displayswitch.md) — macOS 27 起 41 天至少 5 次,触发是唤醒重连不是插拔;能查到起点的几次本 app 都没动屏;内核日志查不到历史,定性用 log stream、找起点看 WindowServer;10-27 停用 app 期间照样卡死并崩溃:app 不是必要条件;27.2 照样卡;卡住的握手在 Mac 自己这头,判断是 Mac 的问题不是坞;官方 27.0 雷雳小节修过「同型号同序列号双屏第二块不亮」(176292156),正是他这套;监视器「雷雳驱动监视」在菜单栏,红三角 = 卡住,别拔坞先重启
+- [雷雳显示驱动约每周卡死一次](panic-thunderbolt-dp-wedge-not-displayswitch.md) — macOS 27 起 41 天至少 5 次,触发是唤醒重连不是插拔;能查到起点的几次本 app 都没动屏;内核日志查不到历史,定性用 log stream、找起点看 WindowServer;10-27 停用 app 期间照样卡死并崩溃:app 不是必要条件;27.2 照样卡;卡住的握手在 Mac 自己这头,判断是 Mac 的问题不是坞;10-27 连坞一起断电后暂未再卡,对照进行中(坞状态可能是诱因);官方 27.0 雷雳小节修过「同型号同序列号双屏第二块不亮」(176292156),正是他这套;监视器「雷雳驱动监视」在菜单栏,红三角 = 卡住,别拔坞先重启
 - [显示器睡眠中救援会忙等](rescue-during-display-sleep-spins.md) — 硬试会在主线程卡约 10 秒并失败;v1.0.15 改为等唤醒,已真机验收并发版
 - [显示故障先恢复再汇报(本项目落法)](restore-visibility-before-reporting.md) — 通用规矩在全局 CLAUDE.md;这里记残影屏怎么恢复、拔插前先查卡死
 - [替换运行中的实例会让关掉的屏亮回](swapping-running-instance-relights-screens.md) — 换候选版前先记下旧实例关了哪些屏、哪块是主屏,换完立刻关回去

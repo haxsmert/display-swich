@@ -60,6 +60,13 @@ Apple DTS 说根子是显示管线分配(高刷屏占两条管线、先认到的
 坞唯一沾边的是:唤醒后屏掉线又重连(`hot plug 0 → 1`)要经过坞传上来,是诱因,但这是正常事件。
 还没做的差分:换一个坞或另一台 Mac 接同一个坞——能把「只有这个坞才触发」排除掉,目前排除不了。
 
+**坞断电对照(进行中)**:10-27 15:41–15:56 他把坞和 Mac 都关了几分钟再接上(`pmset` 15:41:29 Batt → 15:56:35 AC)。
+此前每次出事后的重启坞都带着电(10-26 11:57、10-27 13:54 / 15:20 / 15:36 开机那一刻都是 AC),这是第一次连坞一起断电。
+到 10-28 11:13:唤醒 7 次,其中 4 次两块屏掉线重连,全部回来,驱动健康。但 10-26 只重启 Mac 后也连好了 6 次重连才卡;
+按此前每次重连约 15–25% 出事粗算,4 次全好的机会有 35–50%,要连着 12–20 次全好(按他的作息约 4–6 天)才算数。
+若成立:坞内部的某个状态是诱因的一部分,断电能清掉(上面「坞只是诱因」要改);macOS 不超时、拖成崩溃仍是它的错。
+待他确认:平时会不会给坞断电(如晚上关插线板)——会的话,这个对照就弱了。
+
 **对照实验(10-26 起,10-27 有了结果:停用 app 照样卡死 → app 不是必要条件)**:他不认同是系统的问题——「几天内连续出问题,从概率上不对」,
 认为是 app 没处理好(类比 Java 里线程没释放)。10-26 11:57 重启后他**完全不开 app**,计划 7–8 天(到 11-02 前后)看还卡不卡。
 - 监视:菜单栏小 app「雷雳驱动监视」(`Sources/WedgeWatch`,`bash scripts/wedge-watch.sh install|uninstall|status|check`),
@@ -84,6 +91,9 @@ Apple DTS 说根子是显示管线分配(高刷屏占两条管线、先认到的
   `log show` 只看得到内存里最近约 1 分钟,卡死刷屏时那里只剩几条。面板的卡死检查(`DriverLog`,`log show --last 2m`)靠的正是这几条,
   目前报得出,余量很小。所以「`log show` 查了 N 小时 0 条」只说明「此刻没卡」(卡死是持续刷),不说明这 N 小时里没卡过。
 - 找起点看 WindowServer:`Display N hot plug 0` 之后没有 `Inserting hotplug event for state "out"`,此后各次唤醒再没有这块屏。
+  **`Display N hot plug` 这类(coreanimation)比 SkyLight 的记录清得早**:10-28 查时 10-23 及以前的已一条不剩,拿它数会把掉线数成 0。
+  数「唤醒时掉线重连」用 SkyLight 的 `for state "out"` / `Processing hotplug "out"`,看 `Broadcast: Did Wake` 前后 10 秒;
+  掉线可能先于 `Did Wake` 记下。插拔坞引起的唤醒也带 out,要对照 `pmset` 的 AC / Batt 切换剔掉。
   谓词 `process == "WindowServer" AND (eventMessage CONTAINS "hot plug" OR eventMessage CONTAINS "Inserting hotplug" OR eventMessage CONTAINS "Broadcast: Did Wake")`。
 - 本 app 有没有动过屏:它进程日志里 SkyLight 的 `SLSCompleteDisplayConfigurationWithOption`(每次开关屏必留,启动兜底也留);
   它在唤醒时何时收到通知:同一进程里的 `CGSDisplayNotifyProc`。
@@ -93,7 +103,8 @@ Apple DTS 说根子是显示管线分配(高刷屏占两条管线、先认到的
 - 数 `evaluating for > 1m` 时限定 `process == "kernel"`(或加 `AND process != "log"`):`log` 命令自己的启动记录带着查询参数,会命中同一串字。
 
 **未解的线索**:10-24 前三次唤醒,屏亮起约 2.5 秒后都掉线再重连了一次(WindowServer 的 `hot plug 0 → 1`),
-10-12 到 10-23 的 62 次唤醒里一条 `hot plug` 都没有。重连正要重新申请带宽,等于多一次中招机会。
+10-12 到 10-23 的 62 次唤醒里一条 `hot plug` 都没有(10-28 更正:这是用会被提前清掉的 coreanimation 记录数的,不可靠;
+改用 SkyLight 记录重数,10-14 / 21 / 22 尚存的 20 次唤醒里 2 次有掉线、可能是拔坞,10-23 起几乎每次唤醒都掉线——「掉线变多」大体还成立)。重连正要重新申请带宽,等于多一次中招机会。
 时间上紧接 10-23 的换线测试(一块屏改插机身 HDMI 再插回、坞换口)和装 1.0.18–1.0.21;10-24 致命那次掉线发生在本 app
 收到任何通知之前,所以不是它唤醒时的动作引起的。待查:显示器的输入源是否在换插时被改成了自动选择。
 
