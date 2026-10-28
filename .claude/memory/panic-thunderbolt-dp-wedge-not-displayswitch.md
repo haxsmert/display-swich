@@ -75,6 +75,10 @@ Apple DTS 说根子是显示管线分配(高刷屏占两条管线、先认到的
 认为是 app 没处理好(类比 Java 里线程没释放)。10-26 11:57 重启后他**完全不开 app**,计划 7–8 天(到 11-02 前后)看还卡不卡。
 - 监视:菜单栏小 app「雷雳驱动监视」(`Sources/WedgeWatch`,`bash scripts/wedge-watch.sh install|uninstall|status|check`),
   装在 /Applications,登录时打开一次、他退出就一直退着;每 4 小时实时采 3 秒,卡住时图标变红三角并发通知。
+  **10-28 起(他同意)**:另在屏幕唤醒后 1 分钟、插拔坞(供电方切换,IOPS 通知)后 10 秒各查一次,检查记录行尾标(启动 / 定时 / 唤醒后 / 插拔坞后 / 手动);
+  卡住时自动存现场到 `~/Library/Logs/DisplaySwitch-wedge-evidence/wedge-<时间>/`(内核日志、DP 适配器设备树、24 小时唤醒与插拔、pmset),
+  每次检查把新的 `.panic` / `.shutdownStall` 拷到 `reports/`、他按 ⌃⌥⇧⌘. 收的诊断拷到 `sysdiagnose/`。模拟卡住的测试实例验证过存现场、拷报告、菜单;
+  **唤醒和插拔两条触发还没经真实事件验证**(不能为测它去睡屏或拔坞),下次先看检查记录里有没有「唤醒后」「插拔坞后」。
   他的要求:**要有图标、不要偷偷摸摸**,看图标变化就够,通不通知不重要;间隔 4 小时就够(先装的每 30 分钟纯后台脚本被他否了,嫌勤、嫌看不见)。
   它只用 `log` 命令、不链接 DisplaySwitch 的代码,不污染对照。每次结果记在 `~/Library/Logs/DisplaySwitch-wedge-watch.log`,
   收尾时按它看各时段的状态;实验结束问他留不留。
