@@ -11,3 +11,4 @@
 - [同一系统、不同机型的硬件描述不同](hardware-description-differs-per-mac.md) — MacBook 与 Mac mini M4 设备树形态不同;读 IOKit 内部数据的功能两种机型都要核对,对应关系要插不同口验证
 - [同型号屏靠 EDID 序列号文本分清](same-model-displays-identity-is-edid-serial-text.md) — 数字序列号两台相同,UUID 与 display ID 随接法变;号同系统设置且不随开关消失、说明行写序列号尾号,行序按序列号文本,完整序列号不进日志
 - [公开仓库脱敏要设闸门](public-repo-deidentify-gate.md) — 连记忆都推公开仓库;提交前用本机 .git/info 词表过一遍,命中就不提交,别只打印
+- [系统缺陷别让他改接法做对照](dont-ask-user-to-change-setup-for-platform-bugs.md) — 归因到平台后替他报给厂商、减轻出事代价;别布置要他改真实接法 / 用法的实验

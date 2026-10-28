@@ -50,7 +50,7 @@ metadata:
 连上时,第一块正常、第二块可能不亮(176292156)」——正是他这套:两块同型号屏 EDID 里的数字序列号相同(见
 [[same-model-displays-identity-is-edid-serial-text]])。27 在雷雳这一层专门改过这种配置的处理,而我们的问题恰好从 27 开始;
 是否同一处只是推断。27.2 的 Known Issues 里外接屏相关的只有「显示设置可能恢复不对、排列可能变」(188643179),与卡死无关。
-可做的差分:让坞上只走一块屏(另一块改插机身 HDMI),看还卡不卡。
+~~可做的差分:让坞上只走一块屏(另一块改插机身 HDMI)~~——10-28 他拒绝:「我为什么要改我的链接屏幕的方法?」,别再提,见 [[dont-ask-user-to-change-setup-for-platform-bugs]]。
 **网上有没有同样的人(2026-10-27 搜过一轮,中英文:Apple 社区、开发者论坛、MacRumors、V2EX、GitHub)**:没找到同一特征
 (唤醒后带宽申请卡住、`evaluating for > 1m`、拔坞后 `IOThunderboltPort` busy timeout)。MacRumors 抓取被拒(403),Reddit 搜不进来,
 27 才出 6 周,没搜到不等于没有。最接近的是开发者论坛 814201:M5 / M4 Pro MacBook Pro 接两块相同的屏只亮一块,
